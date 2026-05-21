@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v30 (No False Positives & Perfect API)
+# RouteRich Ultimate Analyzer v32 (DNS Failsafe & RouteRich Architecture Support)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -31,8 +31,9 @@ echo "----------------------------------------------------------"
 # 1. ВЕРСИИ И СТАТУС ПРОГРАММ
 # ====================================================================
 echo -e "\n${C_CYAN}= 1. УСТАНОВЛЕННЫЕ ПАКЕТЫ И ИХ СТАТУС:${C_NONE}"
-SERVICES="podkop zeroblock sing-box zapret zapret2 opera-proxy youtubeUnblock"
-PODKOP_RUN=0; ZEROBLOCK_RUN=0; ZAPRET_RUN=0; OPERA_RUN=0
+# ДОБАВЛЕН dns-failsafe В СПИСОК СКАНИРОВАНИЯ
+SERVICES="podkop zeroblock sing-box zapret zapret2 opera-proxy youtubeUnblock dns-failsafe"
+PODKOP_RUN=0; ZEROBLOCK_RUN=0; ZAPRET_RUN=0; OPERA_RUN=0; FAILSAFE_RUN=0
 
 for srv in $SERVICES; do
     if [ -f "/etc/init.d/$srv" ]; then
@@ -44,6 +45,7 @@ for srv in $SERVICES; do
             [ "$srv" = "zeroblock" ] && ZEROBLOCK_RUN=1
             [ "$srv" = "zapret" ] || [ "$srv" = "zapret2" ] && ZAPRET_RUN=1
             [ "$srv" = "opera-proxy" ] && OPERA_RUN=1
+            [ "$srv" = "dns-failsafe" ] && FAILSAFE_RUN=1
             
             if [ "$srv" = "sing-box" ] && { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; }; then
                 echo -e "  ✅ $(printf '%-15s' $srv) | ${C_GREEN}РАБОТАЕТ (Управляется ядром)${C_NONE} | Авто: $ENAB | $VER"
@@ -60,6 +62,7 @@ if [ "$PODKOP_RUN" -eq 1 ] && [ "$ZEROBLOCK_RUN" -eq 1 ]; then
     echo -e "  ❌ ${C_RED}КРИТИЧЕСКАЯ ОШИБКА: Запущены Podkop и Zeroblock одновременно!${C_NONE}"
     echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Обе системы ломают друг другу маршруты."
     echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} В меню 'Система' -> 'Загрузка' выберите одну программу, а вторую отключите."
+    echo -e "     ${C_YELLOW}⚡ Авто-решение (Оставить Подкоп):${C_NONE} /etc/init.d/zeroblock stop && /etc/init.d/zeroblock disable"
 fi
 
 if { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; } && [ "$ZAPRET_RUN" -eq 1 ]; then
@@ -69,14 +72,21 @@ if { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; } && [ "$ZAPRET_RUN"
 fi
 
 # ====================================================================
-# 2. АНАЛИЗ DNS И FAKEDNS
+# 2. АНАЛИЗ DNS И FAKEDNS (С УЧЕТОМ FAILSAFE)
 # ====================================================================
 echo -e "\n${C_CYAN}= 2. ПРОВЕРКА DNS И FAKEDNS (ПЕРЕХВАТ ТРАФИКА):${C_NONE}"
 DNSMASQ_PORT=$(uci -q get dhcp.@dnsmasq[0].port || echo "53")
 
-if [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -q ":53 .*sing-box"; then
+if [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -E -q ':(53)\s+.*sing-box'; then
     echo -e "  ❌ ${C_RED}КРИТИЧЕСКИЙ КОНФЛИКТ: Конфликт системных DNS-портов!${C_NONE}"
-    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} В меню 'Сеть' -> 'DHCP и DNS' -> 'Расширенные настройки' измените 'Порт DNS-сервера' на 5353."
+    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Служба dnsmasq и Podkop дерутся за порт 53."
+    
+    if [ "$FAILSAFE_RUN" -eq 1 ]; then
+        echo -e "     ${C_CYAN}💡 Внимание (RouteRich):${C_NONE} У вас также запущен DNS Failsafe Proxy. Убедитесь, что его 'Основной DNS' смотрит на правильный порт."
+    fi
+    
+    echo -e "     ${C_CYAN}🛠 Вручную:${C_NONE} 'Сеть' -> 'DHCP и DNS' -> вкладка 'Устройства & Порты' -> 'Порт DNS-сервера' (вписать 5353)."
+    echo -e "     ${C_YELLOW}⚡ В один клик (Скопируйте и выполните):${C_NONE} uci set dhcp.@dnsmasq[0].port='5353' && uci commit dhcp && /etc/init.d/dnsmasq restart"
 else
     echo -e "  ✅ Конфликтов системных DNS-портов не обнаружено."
 fi
@@ -123,10 +133,9 @@ check_sections_and_speed() {
     for sec in $SECTIONS; do
         print_loading "Опрос секции $sec"
         
-        # Определяем тип подключения
         CONN_TYPE=$(uci -q get $APP.$sec.connection_type || echo "proxy")
         
-        # 1. ПРАВИЛЬНЫЙ СБОР СПИСКОВ
+        # СБОР СПИСКОВ
         C_LISTS=$(uci -q get $APP.$sec.community_lists | tr ' ' ',')
         D_TEXT=$(uci -q get $APP.$sec.user_domains_text | tr '\n' ',' | sed 's/ //g; s/,,/,/g; s/^,//; s/,$//')
         S_TEXT=$(uci -q get $APP.$sec.user_subnets_text | tr '\n' ',' | sed 's/ //g; s/,,/,/g; s/^,//; s/,$//')
@@ -139,11 +148,10 @@ check_sections_and_speed() {
         [ -n "$S_TEXT" ] && ALL_ITEMS="${ALL_ITEMS}Подсети: $S_TEXT"
         [ -z "$ALL_ITEMS" ] && ALL_ITEMS="пусто (трафик не назначен)"
         
-        # Запись для поиска дубликатов (чистим от комментариев //)
         for i in $(echo "$C_LISTS" | tr ',' '\n'); do [ -n "$i" ] && echo "Список:$i:$APP->$sec" >> /tmp/analyzer_items.txt; done
         for d in $(echo "$D_TEXT" | tr ',' '\n' | grep -v '^//'); do [ -n "$d" ] && echo "Домен:$d:$APP->$sec" >> /tmp/analyzer_items.txt; done
 
-        # 2. АДАПТИВНЫЙ ТЕСТ СКОРОСТИ
+        # АДАПТИВНЫЙ ТЕСТ СКОРОСТИ
         DELAY=""
         STATUS_MSG=""
         
@@ -178,7 +186,7 @@ check_sections_and_speed() {
 
         clear_loading
         
-        # 3. ВЫВОД И МОДУЛЬ РАССЛЕДОВАНИЯ
+        # ВЫВОД И МОДУЛЬ РАССЛЕДОВАНИЯ
         if [ -n "$DELAY" ] && [ "$DELAY" != "0" ]; then
             echo -e "  ✅ [${C_CYAN}$sec${C_NONE}] -> Отклик: ${C_GREEN}${DELAY}${C_NONE} $STATUS_MSG"
             echo -e "     └ Направлено: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
@@ -247,11 +255,11 @@ if [ -n "$WG_IFACES" ]; then
             ENDPOINT=$(uci -q get network.$PEER.endpoint_host)
             [ -n "$ENDPOINT" ] && ENDPOINTS="$ENDPOINTS $ENDPOINT"
 
-            # ИСПРАВЛЕНИЕ v30: Строгая проверка на "1", чтобы избежать ложных срабатываний
             if [ "$ROUTE_ALLOWED" = "1" ]; then
                  echo -e "  ❌ ${C_RED}ОБНАРУЖЕН ПАРАЗИТНЫЙ МАРШРУТ на интерфейсе $IFACE!${C_NONE}"
                  echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Галочка в VPN перехватывает ВЕСЬ трафик роутера мимо Подкопа."
-                 echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} 'Сеть' -> 'Интерфейсы' -> 'Изменить' -> 'Равноправные узлы'. Снимите галочку 'Маршрутизировать разрешённые IP'."
+                 echo -e "     ${C_CYAN}🛠 Вручную:${C_NONE} 'Сеть' -> 'Интерфейсы' -> 'Изменить' -> 'Равноправные узлы'. Снимите галочку 'Маршрутизировать разрешённые IP'."
+                 echo -e "     ${C_YELLOW}⚡ В один клик (Скопируйте и выполните):${C_NONE} uci set network.$PEER.route_allowed_ips='0' && uci commit network && /etc/init.d/network restart"
             fi
         done
     done
