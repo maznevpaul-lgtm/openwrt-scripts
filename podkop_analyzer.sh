@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v16 (Deep Scan & Conflict Resolution)
+# RouteRich Ultimate Analyzer v17 (Sing-Box API & Smart Rules Edition)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -56,18 +56,14 @@ for srv in $SERVICES; do
     fi
 done
 
-# Сложный анализ конфликтов
 if [ "$PODKOP_RUN" -eq 1 ] && [ "$ZEROBLOCK_RUN" -eq 1 ]; then
     echo -e "  ❌ ${C_RED}КРИТИЧЕСКИЙ КОНФЛИКТ: Запущены Podkop и Zeroblock одновременно!${C_NONE}"
-    echo -e "     ${C_CYAN}└ Проблема:${C_NONE} Обе системы пытаются управлять sing-box. Маршрутизация полностью сломана."
-    echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Выберите только одну службу. Вторую нужно остановить и отключить автозапуск."
+    echo -e "     ${C_CYAN}└ Проблема:${C_NONE} Обе системы пытаются управлять sing-box. Выберите только одну."
 fi
 
 if { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; } && [ "$ZAPRET_RUN" -eq 1 ]; then
     echo -e "  ⚠️  ${C_YELLOW}РИСК КОНФЛИКТА ФАЕРВОЛА: Совместная работа (Podkop/Zeroblock + Zapret)${C_NONE}"
-    echo -e "     ${C_CYAN}└ Проблема:${C_NONE} Обе программы используют nftables для перехвата пакетов. Запрет может 'красть' трафик у Подкопа."
-    echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Если интернет работает нестабильно, убедитесь, что в настройках Zapret"
-    echo -e "       (в файле конфигурации) интерфейс туннелей добавлен в исключения, либо выключите Zapret."
+    echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Убедитесь, что в Zapret интерфейсы Podkop добавлены в исключения."
 fi
 
 # ====================================================================
@@ -79,132 +75,139 @@ if [ "$OPERA_RUN" -eq 1 ]; then
     [ -z "$OPERA_PORT" ] && OPERA_PORT="18080"
     
     CONF_PATH=$(uci -q get podkop.settings.config_path || echo "/etc/sing-box/config.json")
-    
     if grep -q "$OPERA_PORT" "$CONF_PATH" 2>/dev/null; then
-        echo -e "  ✅ Подкоп знает об Opera-proxy (порт $OPERA_PORT интегрирован в конфиг)."
+        echo -e "  ✅ Подкоп знает об Opera-proxy (порт $OPERA_PORT интегрирован)."
     else
-        echo -e "  ❌ ${C_RED}Отсутствует интеграция:${C_NONE} Opera работает на порту $OPERA_PORT, но ядро sing-box туда ничего не отправляет."
-        echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Проверьте настройки секции 'main' (или аналогичной) в Подкопе."
+        echo -e "  ❌ ${C_RED}Отсутствует интеграция:${C_NONE} Ядро не настроено на порт Оперы ($OPERA_PORT)."
     fi
     
     if command -v curl >/dev/null 2>&1; then
-        print_loading "Тест соединения через серверы Opera"
+        print_loading "Тест соединения через Opera"
         HTTP_CODE=$(curl -o /dev/null -s -w "%{http_code}\n" -x http://127.0.0.1:$OPERA_PORT --connect-timeout 5 http://google.com)
         clear_loading
         if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "301" ] || [ "$HTTP_CODE" = "302" ]; then
             echo -e "  ✅ Live Test: Серверы Opera успешно пропускают трафик (Код $HTTP_CODE)."
         else
-            echo -e "  ⚠️  ${C_YELLOW}Live Test провален:${C_NONE} Opera-proxy не может достучаться до интернета. Серверы Opera могут лежать."
+            echo -e "  ⚠️  ${C_YELLOW}Live Test провален:${C_NONE} Opera-proxy не достучался до интернета."
         fi
     fi
 fi
 
 # ====================================================================
-# 3. АНАЛИЗ DNS И ПЕРЕХВАТА САЙТОВ
+# 3. АНАЛИЗ DNS И FAKEDNS
 # ====================================================================
 echo -e "\n${C_CYAN}= 3. ПРОВЕРКА DNS И FAKEDNS (ПЕРЕХВАТ ТРАФИКА):${C_NONE}"
 DNSMASQ_PORT=$(uci -q get dhcp.@dnsmasq[0].port || echo "53")
 
 if [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -q ":53 .*sing-box"; then
-    echo -e "  ❌ ${C_RED}Критический конфликт DNS-портов!${C_NONE}"
-    echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Перейдите в 'Сеть -> DHCP и DNS -> Расширенные настройки'."
-    echo -e "       Измените 'Порт DNS-сервера' с 53 на 5353 и сохраните."
+    echo -e "  ❌ ${C_RED}Критический конфликт DNS-портов!${C_NONE} Измените порт dnsmasq на 5353."
 else
     echo -e "  ✅ Конфликтов системных DNS-портов не обнаружено."
 fi
 
-print_loading "Проверка подмены DNS (facebook.com)"
+print_loading "Проверка подмены DNS"
 FB_IP=$(ping -c 1 facebook.com 2>/dev/null | awk -F '[()]' '/PING/{print $2}')
 clear_loading
 
 if echo "$FB_IP" | grep -qE "^198\.18\."; then
-    echo -e "  ✅ ${C_GREEN}FakeDNS работает идеально!${C_NONE} Заблокированный сайт получил виртуальный IP ($FB_IP) и направлен в туннель."
+    echo -e "  ✅ ${C_GREEN}FakeDNS работает идеально!${C_NONE} Заблокированный сайт получил виртуальный IP ($FB_IP)."
 elif [ -n "$FB_IP" ]; then
     echo -e "  ❌ ${C_RED}Сбой FakeDNS:${C_NONE} Сайт получил настоящий IP-адрес ($FB_IP). Трафик пойдет мимо обхода."
-    echo -e "     ${C_CYAN}🛠 Возможные решения:${C_NONE}"
-    echo -e "       1. В браузере включен «Безопасный DNS» (DoH/DoT) — отключите его."
-    echo -e "       2. Сделайте сброс кэша DNS на роутере (пункт 2 в нашем меню)."
 else
-    echo -e "  ⚠️  ${C_YELLOW}Таймаут DNS.${C_NONE} Роутер вообще не может определить IP-адрес сайта."
+    echo -e "  ⚠️  ${C_YELLOW}Таймаут DNS.${C_NONE} Роутер не может определить IP-адрес сайта."
 fi
 
 # ====================================================================
-# 4. СЕКЦИИ, СПИСКИ И ДОСТУПНОСТЬ ТУННЕЛЕЙ
+# 4. СЕКЦИИ, ПРАВИЛА И API SING-BOX
 # ====================================================================
-echo -e "\n${C_CYAN}= 4. КОНФИГУРАЦИЯ СЕКЦИЙ И РЕАЛЬНАЯ ДОСТУПНОСТЬ СЕРВЕРОВ:${C_NONE}"
+echo -e "\n${C_CYAN}= 4. АНАЛИЗ МАРШРУТОВ И СКОРОСТИ ЧЕРЕЗ API SING-BOX:${C_NONE}"
 > /tmp/analyzer_items.txt
 
-print_loading "Проверка связи с провайдером"
+print_loading "Проверка провайдера"
 WAN_PING=$(ping -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
 clear_loading
 if [ -n "$WAN_PING" ]; then
     echo -e "  🌐 Прямой интернет (Провайдер) -> Отклик: ${C_GREEN}${WAN_PING} мс${C_NONE}"
 else
-    echo -e "  ❌ Прямой интернет -> ${C_RED}Нет связи (Проверьте кабель/провайдера)${C_NONE}"
+    echo -e "  ❌ Прямой интернет -> ${C_RED}Нет связи${C_NONE}"
 fi
 echo "  ---"
 
-CONF_PATH=$(uci -q get podkop.settings.config_path || echo "/etc/sing-box/config.json")
-
-check_sections() {
+check_outbounds() {
     local APP=$1
-    local SECTIONS=$(uci show $APP 2>/dev/null | grep "=section" | cut -d. -f2 | cut -d= -f1)
+    if ! uci -q get $APP.settings >/dev/null; then return; fi
     
-    for sec in $SECTIONS; do
-        OUTBOUND=$(uci -q get $APP.$sec.outbound || uci -q get $APP.$sec.proxy_config_type)
-        [ -z "$OUTBOUND" ] && OUTBOUND="$sec"
+    echo -e "  🔰 Анализ конфигурации [${C_YELLOW}$APP${C_NONE}]:"
+    
+    # Собираем все используемые Outbounds из правил
+    RULES=$(uci show $APP 2>/dev/null | grep -E "=rule|=policy" | cut -d. -f2 | cut -d= -f1)
+    ALL_OUTS="main"
+    for r in $RULES; do
+        O=$(uci -q get $APP.$r.outbound)
+        [ -n "$O" ] && ALL_OUTS="$ALL_OUTS $O"
+    done
+    ALL_OUTS=$(echo "$ALL_OUTS" | tr ' ' '\n' | sort -u)
+    
+    API_PORT="9090" # Стандартный порт API sing-box в Podkop
+    
+    for OUTBOUND in $ALL_OUTS; do
+        print_loading "Опрос направления $OUTBOUND"
         
-        LISTS=$(uci -q get $APP.$sec.list | tr ' ' ',')
-        DOMS=$(uci -q get $APP.$sec.domain | tr ' ' ',')
-        ALL_ITEMS=""
-        [ -n "$LISTS" ] && ALL_ITEMS="${ALL_ITEMS}Списки: $LISTS "
-        [ -n "$DOMS" ] && ALL_ITEMS="${ALL_ITEMS}Домены: $DOMS"
-        [ -z "$ALL_ITEMS" ] && ALL_ITEMS="пусто"
-        
-        for item in $(uci -q get $APP.$sec.list 2>/dev/null); do echo "Список:$item:$APP->$sec" >> /tmp/analyzer_items.txt; done
-        for item in $(uci -q get $APP.$sec.domain 2>/dev/null); do echo "Домен:$item:$APP->$sec" >> /tmp/analyzer_items.txt; done
-
-        print_loading "Тестирование сервера $sec"
-        PING_RES=""
-        STATUS="📦"
-
-        if ip link show "$OUTBOUND" >/dev/null 2>&1; then
-            RES=$(ping -I "$OUTBOUND" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-            if [ -n "$RES" ]; then
-                STATUS="✅"; PING_RES="${C_GREEN}${RES} мс${C_NONE} [Интерфейс: $OUTBOUND]"
-            else
-                STATUS="❌"; PING_RES="${C_RED}Таймаут (Туннель упал!)${C_NONE} [Интерфейс: $OUTBOUND]"
+        # Сбор списков и доменов, привязанных именно к этому Outbound
+        L_STR=""
+        D_STR=""
+        for r in $RULES; do
+            if [ "$(uci -q get $APP.$r.outbound)" = "$OUTBOUND" ]; then
+                for i in $(uci -q get $APP.$r.list 2>/dev/null); do 
+                    L_STR="$L_STR$i, "
+                    echo "Список:$i:$APP->$OUTBOUND" >> /tmp/analyzer_items.txt
+                done
+                for d in $(uci -q get $APP.$r.domain 2>/dev/null); do 
+                    D_STR="$D_STR$d, "
+                    echo "Домен:$d:$APP->$OUTBOUND" >> /tmp/analyzer_items.txt
+                done
             fi
-        else
-            SRV=$(grep -A 15 "\"tag\":\s*\"$OUTBOUND\"" "$CONF_PATH" 2>/dev/null | grep -m 1 "\"server\":" | awk -F'"' '{print $4}')
-            [ -z "$SRV" ] && SRV=$(grep -A 15 "\"tag\":\s*\"$sec\"" "$CONF_PATH" 2>/dev/null | grep -m 1 "\"server\":" | awk -F'"' '{print $4}')
-            
-            if [ "$OUTBOUND" = "main" ] || [ "$sec" = "main" ]; then
-                if netstat -tulpn 2>/dev/null | grep -q ":18080"; then
-                    STATUS="✅"; PING_RES="${C_GREEN}Активен${C_NONE} [Локальный порт: 18080]"
-                else
-                    STATUS="❌"; PING_RES="${C_RED}Служба Opera-proxy недоступна${C_NONE}"
-                fi
-            elif [ -n "$SRV" ] && [ "$SRV" != "127.0.0.1" ]; then
-                RES=$(ping -c 1 -W 2 "$SRV" 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-                if [ -n "$RES" ]; then
-                    STATUS="✅"; PING_RES="${C_GREEN}${RES} мс${C_NONE} [Сервер: $SRV]"
-                else
-                    STATUS="❌"; PING_RES="${C_RED}Сервер не отвечает!${C_NONE} (Заблокирован или не оплачен) [$SRV]"
-                fi
-            else
-                STATUS="📦"; PING_RES="${C_YELLOW}Сложный/Внутренний прокси${C_NONE} [Тэг: $OUTBOUND]"
+        done
+        L_STR=$(echo "$L_STR" | sed 's/, $//')
+        D_STR=$(echo "$D_STR" | sed 's/, $//')
+        
+        ALL_ITEMS=""
+        [ -n "$L_STR" ] && ALL_ITEMS="Списки: $L_STR "
+        [ -n "$D_STR" ] && ALL_ITEMS="${ALL_ITEMS}Домены: $D_STR"
+        [ -z "$ALL_ITEMS" ] && ALL_ITEMS="пусто (правила не назначены)"
+        
+        # МАГИЯ: Запрос задержки через внутреннее API sing-box (как в Дашборде)
+        DELAY=""
+        if command -v wget >/dev/null 2>&1; then
+            API_RES=$(wget -qO- "http://127.0.0.1:${API_PORT}/proxies/${OUTBOUND}/delay?url=http://cp.cloudflare.com/generate_204&timeout=2000" 2>/dev/null)
+            if echo "$API_RES" | grep -q '"delay"'; then
+                DELAY=$(echo "$API_RES" | sed -n 's/.*"delay": *\([0-9]*\).*/\1/p')
             fi
         fi
-
+        
         clear_loading
-        echo -e "  $STATUS [${C_CYAN}$sec${C_NONE}] -> Отклик: $PING_RES"
+        
+        if [ -n "$DELAY" ]; then
+            echo -e "  ✅ [${C_CYAN}$OUTBOUND${C_NONE}] -> Отклик: ${C_GREEN}${DELAY} мс${C_NONE} (sing-box API)"
+        else
+            # Резервный метод для обычных интерфейсов типа awg10
+            if ip link show "$OUTBOUND" >/dev/null 2>&1; then
+                RES=$(ping -I "$OUTBOUND" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
+                if [ -n "$RES" ]; then
+                    echo -e "  ✅ [${C_CYAN}$OUTBOUND${C_NONE}] -> Отклик: ${C_GREEN}${RES} мс${C_NONE} (ping интерфейса)"
+                else
+                    echo -e "  ❌ [${C_CYAN}$OUTBOUND${C_NONE}] -> ${C_RED}Таймаут${C_NONE} (Интерфейс не отвечает)"
+                fi
+            else
+                echo -e "  ❌ [${C_CYAN}$OUTBOUND${C_NONE}] -> ${C_RED}Не отвечает${C_NONE} (API sing-box таймаут)"
+            fi
+        fi
         echo -e "     └ Содержит: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
     done
 }
 
-check_sections "podkop"
-check_sections "zeroblock"
+check_outbounds "podkop"
+check_outbounds "zeroblock"
 
 echo "  ---"
 DUPS=$(awk -F':' '{print $1":"$2}' /tmp/analyzer_items.txt | sort | uniq -d)
@@ -219,7 +222,7 @@ if [ -n "$DUPS" ]; then
             echo -e "       -> $TYPE ${C_RED}'$VAL'${C_NONE} добавлен сразу в: [ ${C_YELLOW}$IN_SECS${C_NONE} ]"
         fi
     done
-    echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Один сайт должен лежать только в одной секции. Удалите лишнее в меню."
+    echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Один сайт/список должен лежать только в одной секции. Удалите лишнее."
 else
     echo -e "  ✅ ${C_GREEN}Пересечений нет:${C_NONE} Списки маршрутизации чисты."
 fi
@@ -249,7 +252,7 @@ if [ -n "$WG_IFACES" ]; then
 
     UNIQUE_IPS=$(echo "$ENDPOINTS" | tr ' ' '\n' | grep -v '^$' | sort -u)
     for IP in $UNIQUE_IPS; do
-        print_loading "Проверка зацикливания маршрутов ($IP)"
+        print_loading "Проверка зацикливания ($IP)"
         if ! echo "$IP" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
             RESOLVED=$(ping -c 1 "$IP" 2>/dev/null | awk -F '[()]' '/PING/{print $2}')
             [ -n "$RESOLVED" ] && IP="$RESOLVED"
@@ -257,7 +260,6 @@ if [ -n "$WG_IFACES" ]; then
         clear_loading
         
         [ -z "$IP" ] && continue
-
         ROUTE_DEV=$(ip route get "$IP" 2>/dev/null | head -n1 | grep -oE 'dev [a-zA-Z0-9_-]+' | awk '{print $2}')
         if echo "$ROUTE_DEV" | grep -qE "^(tun|wg|awg|sing|podkop|zeroblock)"; then
             echo -e "  ❌ ${C_RED}Зацикливание трафика! VPN-сервер ($IP) уходит сам в себя.${C_NONE}"
@@ -269,7 +271,7 @@ if [ -n "$WG_IFACES" ]; then
 fi
 
 # ====================================================================
-# 6. ВАЖНО: АНАЛИЗ ПРОБЛЕМ НА СТОРОНЕ ПК / КЛИЕНТА
+# 6. ЧЕКЛИСТ КОНЕЧНОГО УСТРОЙСТВА
 # ====================================================================
 echo -e "\n${C_CYAN}= 6. ЧЕКЛИСТ КОНЕЧНОГО УСТРОЙСТВА (ПК / Смартфон):${C_NONE}"
 echo -e "  💡 ${C_YELLOW}Если тесты роутера выше зеленые (✅), но сайты у вас не открываются, проверьте:${C_NONE}"
@@ -280,7 +282,7 @@ echo -e "        └ Зайдите в настройки браузера -> К
 echo -e "     3. ${C_CYAN}Кэш системы:${C_NONE} Нажмите Win+R, введите cmd и выполните команду: ipconfig /flushdns"
 
 # ====================================================================
-# 7. РАСХОД ТРАФИКА ЗА МЕСЯЦ
+# 7. РАСХОД ТРАФИКА
 # ====================================================================
 if command -v vnstat >/dev/null 2>&1; then
     echo -e "\n${C_CYAN}= 7. СТАТИСТИКА РАСХОДА ИНТЕРНЕТА:${C_NONE}"
@@ -293,7 +295,7 @@ if command -v vnstat >/dev/null 2>&1; then
 fi
 
 # ====================================================================
-# 8. НАГРУЗКА И WI-FI
+# 8. СИСТЕМА И НАГРУЗКА
 # ====================================================================
 echo -e "\n${C_CYAN}= 8. СИСТЕМА И НАГРУЗКА:${C_NONE}"
 UPTIME=$(awk '{print int($1/86400)"д "int(($1%86400)/3600)"ч "int(($1%3600)/60)"м"}' /proc/uptime)
