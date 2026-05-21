@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v34 (Full System Stats, Live Logs & API Speed)
+# RouteRich Ultimate Analyzer v35 (Smart RouteRich DNS Architecture)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -74,10 +74,12 @@ fi
 echo -e "\n${C_CYAN}= 2. ПРОВЕРКА DNS И FAKEDNS (ПЕРЕХВАТ ТРАФИКА):${C_NONE}"
 DNSMASQ_PORT=$(uci -q get dhcp.@dnsmasq[0].port || echo "53")
 
-if [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -E -q ':(53)\s+.*sing-box'; then
+# ИСПРАВЛЕНИЕ: Умная проверка архитектуры DNS Failsafe Proxy
+if [ "$FAILSAFE_RUN" -eq 1 ]; then
+    echo -e "  ✅ ${C_GREEN}Архитектура RouteRich:${C_NONE} DNS Failsafe Proxy управляет трафиком. Порт 53 безопасно разделен (127.0.0.42)."
+elif [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -E -q ':(53)\s+.*sing-box'; then
     echo -e "  ❌ ${C_RED}КРИТИЧЕСКИЙ КОНФЛИКТ: Конфликт системных DNS-портов!${C_NONE}"
     echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Служба dnsmasq и Podkop дерутся за порт 53."
-    [ "$FAILSAFE_RUN" -eq 1 ] && echo -e "     ${C_CYAN}💡 Внимание:${C_NONE} У вас запущен DNS Failsafe Proxy. Убедитесь, что его 'Основной DNS' смотрит на правильный порт."
     echo -e "     ${C_YELLOW}⚡ В один клик:${C_NONE} uci set dhcp.@dnsmasq[0].port='5353' && uci commit dhcp && /etc/init.d/dnsmasq restart"
 else
     echo -e "  ✅ Конфликтов системных DNS-портов не обнаружено."
