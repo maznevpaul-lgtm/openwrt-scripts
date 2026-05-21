@@ -7,8 +7,7 @@ C_YELLOW='\033[1;33m'
 C_RED='\033[1;31m'
 C_NONE='\033[0m'
 
-# !!! ОБЯЗАТЕЛЬНО УКАЖИ ЗДЕСЬ СВОЙ НИК И СВОЙ РЕПОЗИТОРИЙ (без слэша на конце) !!!
-BASE_URL="https://raw.githubusercontent.com/ТВОЙ_НИК/ТВОЙ_РЕПОЗИТОРИЙ/main"
+BASE_URL="https://maznevpaul-lgtm.github.io/openwrt-scripts"
 
 clear
 echo -e "${C_CYAN}==================================================${C_NONE}"
