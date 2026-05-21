@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v17 (Sing-Box API & Smart Rules Edition)
+# RouteRich Ultimate Analyzer v18 (Fixed Sections & API HTTPS Ping)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -58,16 +58,14 @@ done
 
 if [ "$PODKOP_RUN" -eq 1 ] && [ "$ZEROBLOCK_RUN" -eq 1 ]; then
     echo -e "  ❌ ${C_RED}КРИТИЧЕСКИЙ КОНФЛИКТ: Запущены Podkop и Zeroblock одновременно!${C_NONE}"
-    echo -e "     ${C_CYAN}└ Проблема:${C_NONE} Обе системы пытаются управлять sing-box. Выберите только одну."
 fi
 
 if { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; } && [ "$ZAPRET_RUN" -eq 1 ]; then
     echo -e "  ⚠️  ${C_YELLOW}РИСК КОНФЛИКТА ФАЕРВОЛА: Совместная работа (Podkop/Zeroblock + Zapret)${C_NONE}"
-    echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Убедитесь, что в Zapret интерфейсы Podkop добавлены в исключения."
 fi
 
 # ====================================================================
-# 2. АНАЛИЗ OPERA-PROXY И ЕГО ИНТЕГРАЦИИ
+# 2. АНАЛИЗ OPERA-PROXY
 # ====================================================================
 if [ "$OPERA_RUN" -eq 1 ]; then
     echo -e "\n${C_CYAN}= 2. ИНТЕГРАЦИЯ OPERA-PROXY:${C_NONE}"
@@ -118,7 +116,7 @@ else
 fi
 
 # ====================================================================
-# 4. СЕКЦИИ, ПРАВИЛА И API SING-BOX
+# 4. СЕКЦИИ И API SING-BOX
 # ====================================================================
 echo -e "\n${C_CYAN}= 4. АНАЛИЗ МАРШРУТОВ И СКОРОСТИ ЧЕРЕЗ API SING-BOX:${C_NONE}"
 > /tmp/analyzer_items.txt
@@ -139,68 +137,62 @@ check_outbounds() {
     
     echo -e "  🔰 Анализ конфигурации [${C_YELLOW}$APP${C_NONE}]:"
     
-    # Собираем все используемые Outbounds из правил
-    RULES=$(uci show $APP 2>/dev/null | grep -E "=rule|=policy" | cut -d. -f2 | cut -d= -f1)
-    ALL_OUTS="main"
-    for r in $RULES; do
-        O=$(uci -q get $APP.$r.outbound)
-        [ -n "$O" ] && ALL_OUTS="$ALL_OUTS $O"
-    done
-    ALL_OUTS=$(echo "$ALL_OUTS" | tr ' ' '\n' | sort -u)
+    # Жесткий перебор всех секций (как в интерфейсе LuCI)
+    SECTIONS=$(uci show $APP 2>/dev/null | grep "=section" | cut -d. -f2 | cut -d= -f1)
+    API_PORT="9090"
     
-    API_PORT="9090" # Стандартный порт API sing-box в Podkop
-    
-    for OUTBOUND in $ALL_OUTS; do
-        print_loading "Опрос направления $OUTBOUND"
+    for sec in $SECTIONS; do
+        print_loading "Анализ секции $sec"
         
-        # Сбор списков и доменов, привязанных именно к этому Outbound
+        # Сбор списков: проверяем и прямые привязки, и через правила
         L_STR=""
         D_STR=""
+        
+        # Прямая привязка (старые версии)
+        for i in $(uci -q get $APP.$sec.list 2>/dev/null); do L_STR="$L_STR$i, "; echo "Список:$i:$APP->$sec" >> /tmp/analyzer_items.txt; done
+        for d in $(uci -q get $APP.$sec.domain 2>/dev/null); do D_STR="$D_STR$d, "; echo "Домен:$d:$APP->$sec" >> /tmp/analyzer_items.txt; done
+        
+        # Привязка через rules (новые версии)
+        RULES=$(uci show $APP 2>/dev/null | grep -E "=rule|=policy" | cut -d. -f2 | cut -d= -f1)
         for r in $RULES; do
-            if [ "$(uci -q get $APP.$r.outbound)" = "$OUTBOUND" ]; then
-                for i in $(uci -q get $APP.$r.list 2>/dev/null); do 
-                    L_STR="$L_STR$i, "
-                    echo "Список:$i:$APP->$OUTBOUND" >> /tmp/analyzer_items.txt
-                done
-                for d in $(uci -q get $APP.$r.domain 2>/dev/null); do 
-                    D_STR="$D_STR$d, "
-                    echo "Домен:$d:$APP->$OUTBOUND" >> /tmp/analyzer_items.txt
-                done
+            if [ "$(uci -q get $APP.$r.outbound)" = "$sec" ]; then
+                for i in $(uci -q get $APP.$r.list 2>/dev/null); do L_STR="$L_STR$i, "; echo "Список:$i:$APP->$sec" >> /tmp/analyzer_items.txt; done
+                for d in $(uci -q get $APP.$r.domain 2>/dev/null); do D_STR="$D_STR$d, "; echo "Домен:$d:$APP->$sec" >> /tmp/analyzer_items.txt; done
             fi
         done
+        
         L_STR=$(echo "$L_STR" | sed 's/, $//')
         D_STR=$(echo "$D_STR" | sed 's/, $//')
         
         ALL_ITEMS=""
         [ -n "$L_STR" ] && ALL_ITEMS="Списки: $L_STR "
         [ -n "$D_STR" ] && ALL_ITEMS="${ALL_ITEMS}Домены: $D_STR"
-        [ -z "$ALL_ITEMS" ] && ALL_ITEMS="пусто (правила не назначены)"
+        [ -z "$ALL_ITEMS" ] && ALL_ITEMS="пусто (трафик не назначен)"
         
-        # МАГИЯ: Запрос задержки через внутреннее API sing-box (как в Дашборде)
+        # МАГИЯ 2.0: API запрос к sing-box (используем https чтобы избежать блоков HTTP)
         DELAY=""
         if command -v wget >/dev/null 2>&1; then
-            API_RES=$(wget -qO- "http://127.0.0.1:${API_PORT}/proxies/${OUTBOUND}/delay?url=http://cp.cloudflare.com/generate_204&timeout=2000" 2>/dev/null)
+            API_RES=$(wget -qO- "http://127.0.0.1:${API_PORT}/proxies/${sec}/delay?url=https://cp.cloudflare.com/generate_204&timeout=2000" 2>/dev/null)
             if echo "$API_RES" | grep -q '"delay"'; then
                 DELAY=$(echo "$API_RES" | sed -n 's/.*"delay": *\([0-9]*\).*/\1/p')
+            fi
+        fi
+        
+        # Резервный пинг, если API вернул пустоту, но это сетевой интерфейс (например, awg10)
+        if [ -z "$DELAY" ]; then
+            OUTB_IFACE=$(uci -q get $APP.$sec.outbound)
+            if [ -n "$OUTB_IFACE" ] && ip link show "$OUTB_IFACE" >/dev/null 2>&1; then
+                RES=$(ping -I "$OUTB_IFACE" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
+                [ -n "$RES" ] && DELAY="$RES (ICMP Ping)"
             fi
         fi
         
         clear_loading
         
         if [ -n "$DELAY" ]; then
-            echo -e "  ✅ [${C_CYAN}$OUTBOUND${C_NONE}] -> Отклик: ${C_GREEN}${DELAY} мс${C_NONE} (sing-box API)"
+            echo -e "  ✅ [${C_CYAN}$sec${C_NONE}] -> Отклик: ${C_GREEN}${DELAY} мс${C_NONE}"
         else
-            # Резервный метод для обычных интерфейсов типа awg10
-            if ip link show "$OUTBOUND" >/dev/null 2>&1; then
-                RES=$(ping -I "$OUTBOUND" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-                if [ -n "$RES" ]; then
-                    echo -e "  ✅ [${C_CYAN}$OUTBOUND${C_NONE}] -> Отклик: ${C_GREEN}${RES} мс${C_NONE} (ping интерфейса)"
-                else
-                    echo -e "  ❌ [${C_CYAN}$OUTBOUND${C_NONE}] -> ${C_RED}Таймаут${C_NONE} (Интерфейс не отвечает)"
-                fi
-            else
-                echo -e "  ❌ [${C_CYAN}$OUTBOUND${C_NONE}] -> ${C_RED}Не отвечает${C_NONE} (API sing-box таймаут)"
-            fi
+            echo -e "  ❌ [${C_CYAN}$sec${C_NONE}] -> ${C_RED}Таймаут / Не отвечает${C_NONE}"
         fi
         echo -e "     └ Содержит: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
     done
@@ -222,7 +214,6 @@ if [ -n "$DUPS" ]; then
             echo -e "       -> $TYPE ${C_RED}'$VAL'${C_NONE} добавлен сразу в: [ ${C_YELLOW}$IN_SECS${C_NONE} ]"
         fi
     done
-    echo -e "     ${C_CYAN}🛠 Решение:${C_NONE} Один сайт/список должен лежать только в одной секции. Удалите лишнее."
 else
     echo -e "  ✅ ${C_GREEN}Пересечений нет:${C_NONE} Списки маршрутизации чисты."
 fi
