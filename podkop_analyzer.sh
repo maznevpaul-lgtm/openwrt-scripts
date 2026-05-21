@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v20 (Solid Ping & Full Instructions)
+# RouteRich Ultimate Analyzer v22 (Bulletproof Speed & Lists)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -121,19 +121,19 @@ check_sections_and_speed() {
     for sec in $SECTIONS; do
         print_loading "Опрос секции $sec"
         
-        # 1. СОБИРАЕМ СПИСКИ СО ВСЕГО ПОДКОПА
+        # 1. ГАРАНТИРОВАННЫЙ СБОР СПИСКОВ
         L_RAW="$(uci -q get $APP.$sec.list)"
         D_RAW="$(uci -q get $APP.$sec.domain)"
-        RULES=$(uci show $APP 2>/dev/null | grep -E "=rule|=policy" | cut -d. -f2 | cut -d= -f1)
-        for r in $RULES; do
-            if [ "$(uci -q get $APP.$r.outbound)" = "$sec" ]; then
-                L_RAW="$L_RAW $(uci -q get $APP.$r.list)"
-                D_RAW="$D_RAW $(uci -q get $APP.$r.domain)"
-            fi
+        
+        # Ищем все правила, ссылающиеся на этот туннель
+        REFS=$(uci show $APP 2>/dev/null | grep "\.outbound='$sec'" | cut -d. -f2 | sort -u)
+        for r in $REFS; do
+            L_RAW="$L_RAW $(uci -q get $APP.$r.list)"
+            D_RAW="$D_RAW $(uci -q get $APP.$r.domain)"
         done
         
-        L_STR=$(echo "$L_RAW" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//')
-        D_STR=$(echo "$D_RAW" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//')
+        L_STR=$(echo "$L_RAW" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+        D_STR=$(echo "$D_RAW" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//; s/,/, /g')
         ALL_ITEMS=""
         [ -n "$L_STR" ] && ALL_ITEMS="Списки: $L_STR "
         [ -n "$D_STR" ] && ALL_ITEMS="${ALL_ITEMS}Домены: $D_STR"
@@ -142,48 +142,58 @@ check_sections_and_speed() {
         for i in $(echo "$L_RAW" | tr ' ' '\n' | grep -v '^$'); do echo "Список:$i:$APP->$sec" >> /tmp/analyzer_items.txt; done
         for d in $(echo "$D_RAW" | tr ' ' '\n' | grep -v '^$'); do echo "Домен:$d:$APP->$sec" >> /tmp/analyzer_items.txt; done
 
-        # 2. БРОНЕБОЙНЫЙ ПОИСК СКОРОСТИ
+        # 2. БРОНЕБОЙНОЕ ОПРЕДЕЛЕНИЕ СКОРОСТИ
         DELAY=""
-        SRV_IP=$(uci -q get $APP.$sec.server || uci -q get $APP.$sec.address)
-        IFACE=$(uci -q get $APP.$sec.outbound)
-        
-        # Метод А: Если это локальный прокси (main/opera)
-        if [ "$sec" = "main" ]; then
+        OUTBOUND=$(uci -q get $APP.$sec.outbound || uci -q get $APP.$sec.proxy_config_type)
+        [ -z "$OUTBOUND" ] && OUTBOUND="$sec"
+
+        # Метод А: API sing-box (Обязательно по HTTP, чтобы обойти ошибку сертификатов wget)
+        URL1="http://127.0.0.1:9090/proxies/${sec}/delay?url=http://cp.cloudflare.com/generate_204&timeout=2000"
+        URL2="http://127.0.0.1:9090/proxies/${OUTBOUND}/delay?url=http://cp.cloudflare.com/generate_204&timeout=2000"
+
+        API_RES=""
+        if command -v curl >/dev/null 2>&1; then
+            API_RES=$(curl -s "$URL1")
+            [ -z "$(echo "$API_RES" | grep delay)" ] && API_RES=$(curl -s "$URL2")
+        elif command -v wget >/dev/null 2>&1; then
+            API_RES=$(wget -qO- "$URL1" 2>/dev/null)
+            [ -z "$(echo "$API_RES" | grep delay)" ] && API_RES=$(wget -qO- "$URL2" 2>/dev/null)
+        fi
+
+        if echo "$API_RES" | grep -q '"delay"'; then
+            DELAY=$(echo "$API_RES" | sed -n 's/.*"delay": *\([0-9]*\).*/\1/p')
+            [ -n "$DELAY" ] && DELAY="${DELAY} мс"
+        fi
+
+        # Метод Б: Если это сетевой интерфейс AWG/WG
+        if [ -z "$DELAY" ] && ip link show "$OUTBOUND" >/dev/null 2>&1; then
+            RES=$(ping -I "$OUTBOUND" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
+            [ -n "$RES" ] && DELAY="${RES} мс (Интерфейс)"
+        fi
+
+        # Метод В: Если это локальный прокси (main/opera)
+        if [ -z "$DELAY" ] && [ "$sec" = "main" ] && command -v curl >/dev/null 2>&1; then
             PORT=$(netstat -tulpn 2>/dev/null | grep -iE 'opera|18080' | awk '{print $4}' | awk -F: '{print $NF}' | head -n 1)
             [ -z "$PORT" ] && PORT=18080
-            if command -v curl >/dev/null 2>&1; then
-                HTTP_CODE=$(curl -o /dev/null -s -w "%{http_code}\n" -x http://127.0.0.1:$PORT --connect-timeout 2 http://cp.cloudflare.com/generate_204)
-                if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
-                    DELAY="Активен (Локальный порт: $PORT)"
-                fi
+            HTTP_CODE=$(curl -o /dev/null -s -w "%{http_code}\n" -x http://127.0.0.1:$PORT --connect-timeout 2 http://cp.cloudflare.com/generate_204)
+            if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
+                DELAY="Активен (Локальный порт $PORT)"
             fi
-        fi
-        
-        # Метод Б: Прямой пинг IP сервера (Vless, Shadowsocks, Mimo)
-        if [ -z "$DELAY" ] && [ -n "$SRV_IP" ] && [ "$SRV_IP" != "127.0.0.1" ]; then
-            RES=$(ping -c 1 -W 2 "$SRV_IP" 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-            [ -n "$RES" ] && DELAY="${RES} мс (Сервер $SRV_IP)"
-        fi
-        
-        # Метод В: Пинг через системный интерфейс (AWG2 / awg10)
-        if [ -z "$DELAY" ] && [ -n "$IFACE" ] && ip link show "$IFACE" >/dev/null 2>&1; then
-            RES=$(ping -I "$IFACE" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-            [ -n "$RES" ] && DELAY="${RES} мс (Туннель $IFACE)"
         fi
         
         clear_loading
         
-        # 3. ВЫВОД РЕЗУЛЬТАТА И ПОДРОБНЫХ ИНСТРУКЦИЙ
+        # 3. ВЫВОД И ИНСТРУКЦИИ
         if [ -n "$DELAY" ]; then
             echo -e "  ✅ [${C_CYAN}$sec${C_NONE}] -> Отклик: ${C_GREEN}${DELAY}${C_NONE}"
             echo -e "     └ Содержит: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
         else
             echo -e "  ❌ [${C_CYAN}$sec${C_NONE}] -> ${C_RED}Таймаут / Не отвечает${C_NONE} (Туннель упал)"
-            echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Роутер не смог получить ответ от сервера секции $sec."
+            echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Роутер не смог достучаться до сервера секции $sec. Интернет через неё не пойдет."
             echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE}"
-            echo -e "       1. Убедитесь, что подписка (ключ) на этот туннель оплачена и актуальна."
-            echo -e "       2. Провайдер мог заблокировать IP этого сервера. Попробуйте обновить ключ."
-            echo -e "       3. Проверьте правильность введенных ключей в настройках Подкопа (раздел Секции)."
+            echo -e "       1. Если это VLESS/Shadowsocks: проверьте, оплачена ли подписка, и попробуйте обновить ключ."
+            echo -e "       2. Если это AWG2/WireGuard: провайдер мог заблокировать протокол (ТСПУ). Проверьте настройки интерфейса."
+            echo -e "       3. Проверьте правильность введенных данных (IP, порт) в настройках Подкопа (раздел Секции)."
             echo -e "     └ Содержит: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
         fi
     done
@@ -206,7 +216,7 @@ if [ -n "$DUPS" ]; then
         fi
     done
     echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Ядро не понимает, в какой туннель отправлять трафик, т.к. сайт указан в двух местах."
-    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Удалите дубликаты. Один домен или список должен находиться строго в одной секции."
+    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Удалите дубликаты. Один домен/список должен находиться строго в одной секции."
 else
     echo -e "  ✅ ${C_GREEN}Пересечений нет:${C_NONE} Списки маршрутизации чисты и не конфликтуют."
 fi
