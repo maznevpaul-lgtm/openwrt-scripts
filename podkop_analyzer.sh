@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v29 (New Schema 0.7.17+ & Smart Logic)
+# RouteRich Ultimate Analyzer v30 (No False Positives & Perfect API)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -126,7 +126,7 @@ check_sections_and_speed() {
         # Определяем тип подключения
         CONN_TYPE=$(uci -q get $APP.$sec.connection_type || echo "proxy")
         
-        # 1. ПРАВИЛЬНЫЙ СБОР СПИСКОВ (Новая схема 0.7+)
+        # 1. ПРАВИЛЬНЫЙ СБОР СПИСКОВ
         C_LISTS=$(uci -q get $APP.$sec.community_lists | tr ' ' ',')
         D_TEXT=$(uci -q get $APP.$sec.user_domains_text | tr '\n' ',' | sed 's/ //g; s/,,/,/g; s/^,//; s/,$//')
         S_TEXT=$(uci -q get $APP.$sec.user_subnets_text | tr '\n' ',' | sed 's/ //g; s/,,/,/g; s/^,//; s/,$//')
@@ -148,12 +148,10 @@ check_sections_and_speed() {
         STATUS_MSG=""
         
         if [ "$CONN_TYPE" = "exclusion" ]; then
-            # Это секция исключений (идет напрямую)
             DELAY="$WAN_PING"
             [ -n "$DELAY" ] && DELAY="${DELAY} мс"
             STATUS_MSG="(Исключение / Bypass)"
         elif [ "$CONN_TYPE" = "vpn" ]; then
-            # Это системный VPN интерфейс (AWG2)
             IFACE=$(uci -q get $APP.$sec.interface)
             if [ -n "$IFACE" ] && ip link show "$IFACE" >/dev/null 2>&1; then
                 RES=$(ping -I "$IFACE" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
@@ -161,7 +159,6 @@ check_sections_and_speed() {
                 STATUS_MSG="(Туннель $IFACE)"
             fi
         else
-            # Это Прокси (Vless, main) - тестим через API ядра
             TARGET_TAG="${sec}-out"
             [ "$sec" = "main" ] && TARGET_TAG="main-out"
             
@@ -188,12 +185,10 @@ check_sections_and_speed() {
         else
             echo -e "  ❌ [${C_CYAN}$sec${C_NONE}] -> ${C_RED}Не отвечает${C_NONE} $STATUS_MSG"
             
-            # --- СТАРТ РАССЛЕДОВАНИЯ ---
             if [ "$CONN_TYPE" = "vpn" ]; then
                 IFACE=$(uci -q get $APP.$sec.interface)
                 if command -v wg >/dev/null 2>&1 && [ -n "$IFACE" ]; then
                     HS=$(wg show "$IFACE" latest-handshakes 2>/dev/null | awk '{print $2}')
-                    NOW=$(date +%s)
                     if [ -z "$HS" ] || [ "$HS" -eq 0 ]; then
                         echo -e "     ${C_CYAN}🔍 Расследование:${C_NONE} 'Рукопожатия' (Handshake) с сервером нет."
                         echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Провайдер блокирует протокол (ТСПУ) или ошибка в ключах."
@@ -208,7 +203,6 @@ check_sections_and_speed() {
                 echo -e "     ${C_CYAN}🔍 Расследование:${C_NONE} Прокси-узел $TARGET_TAG не проходит проверку задержки."
                 echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Проверьте оплату VPS, правильность UUID или блокировку порта."
             fi
-            # --- КОНЕЦ РАССЛЕДОВАНИЯ ---
             
             echo -e "     └ Направлено: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
         fi
@@ -253,7 +247,8 @@ if [ -n "$WG_IFACES" ]; then
             ENDPOINT=$(uci -q get network.$PEER.endpoint_host)
             [ -n "$ENDPOINT" ] && ENDPOINTS="$ENDPOINTS $ENDPOINT"
 
-            if [ "$ROUTE_ALLOWED" = "1" ] || [ -z "$ROUTE_ALLOWED" ]; then
+            # ИСПРАВЛЕНИЕ v30: Строгая проверка на "1", чтобы избежать ложных срабатываний
+            if [ "$ROUTE_ALLOWED" = "1" ]; then
                  echo -e "  ❌ ${C_RED}ОБНАРУЖЕН ПАРАЗИТНЫЙ МАРШРУТ на интерфейсе $IFACE!${C_NONE}"
                  echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Галочка в VPN перехватывает ВЕСЬ трафик роутера мимо Подкопа."
                  echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} 'Сеть' -> 'Интерфейсы' -> 'Изменить' -> 'Равноправные узлы'. Снимите галочку 'Маршрутизировать разрешённые IP'."
