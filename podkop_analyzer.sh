@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v33 (Live Log Scanner & Auto-Fix)
+# RouteRich Ultimate Analyzer v34 (Full System Stats, Live Logs & API Speed)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -59,6 +59,7 @@ done
 
 if [ "$PODKOP_RUN" -eq 1 ] && [ "$ZEROBLOCK_RUN" -eq 1 ]; then
     echo -e "  ❌ ${C_RED}КРИТИЧЕСКАЯ ОШИБКА: Запущены Podkop и Zeroblock одновременно!${C_NONE}"
+    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Обе системы ломают друг другу маршруты."
     echo -e "     ${C_YELLOW}⚡ Авто-решение (Оставить Подкоп):${C_NONE} /etc/init.d/zeroblock stop && /etc/init.d/zeroblock disable"
 fi
 
@@ -149,7 +150,7 @@ check_sections_and_speed() {
         if [ "$CONN_TYPE" = "exclusion" ]; then
             DELAY="$WAN_PING"
             [ -n "$DELAY" ] && DELAY="${DELAY} мс"
-            STATUS_MSG="(Исключение)"
+            STATUS_MSG="(Исключение / Bypass)"
         elif [ "$CONN_TYPE" = "vpn" ]; then
             IFACE=$(uci -q get $APP.$sec.interface)
             if [ -n "$IFACE" ] && ip link show "$IFACE" >/dev/null 2>&1; then
@@ -183,7 +184,7 @@ check_sections_and_speed() {
             echo -e "  ❌ [${C_CYAN}$sec${C_NONE}] -> ${C_RED}Не отвечает${C_NONE} $STATUS_MSG"
             if [ "$CONN_TYPE" = "vpn" ]; then
                 echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Провайдер блокирует протокол, проблема с MTU или ключами."
-            else
+            elif [ "$CONN_TYPE" != "exclusion" ]; then
                 echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Проверьте оплату VPS, правильность UUID или блокировку порта."
             fi
             echo -e "     └ Направлено: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
@@ -220,8 +221,8 @@ else
     
     if [ "$ERR_REFUSED" -gt 0 ]; then
         echo -e "  ❌ ${C_RED}Connection Refused ($ERR_REFUSED раз):${C_NONE}"
-        echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Внутренний прокси-сервер (например, Opera-proxy на порту 18080) 'упал' или отклоняет подключения."
-        echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Перезапустите службу opera-proxy в 'Система -> Загрузка'."
+        echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Внутренний прокси-сервер (например, Opera-proxy) 'упал' или отклоняет подключения."
+        echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Перезапустите службу в 'Система -> Загрузка'."
     fi
     
     if [ "$ERR_TIMEOUT" -gt 0 ]; then
@@ -229,7 +230,7 @@ else
         echo -e "  ❌ ${C_RED}I/O Timeout ($ERR_TIMEOUT раз):${C_NONE}"
         echo -e "     ${C_CYAN}└ Проблемные узлы:${C_NONE} ${C_YELLOW}$(echo $BAD_OUTS | tr '\n' ' ')${C_NONE}"
         echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Пакеты уходят в этот туннель, но теряются по пути. Сервер не отвечает."
-        echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Если это AWG2: снизьте MTU до 1280. Если это Vless: возможно, провайдер блокирует пакеты по размеру (ТСПУ) или сервер недоступен."
+        echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Для AWG2: снизьте MTU до 1280. Для Vless: блокировка провайдера (ТСПУ) или сервер недоступен."
     fi
 fi
 rm -f /tmp/singbox_logs.txt
@@ -237,11 +238,15 @@ rm -f /tmp/singbox_logs.txt
 # ====================================================================
 # 5. ПРОВЕРКА НАСТРОЕК AMNEZIA WG / ЗАЦИКЛИВАНИЯ
 # ====================================================================
+echo -e "\n${C_CYAN}= 5. ПРОВЕРКА АНОМАЛИЙ VPN (AMNEZIA WG / WIREGUARD):${C_NONE}"
 WG_IFACES=$(uci show network | grep -E "\.proto=" | grep -E "wireguard|amneziawg" | cut -d. -f2 | cut -d= -f1)
-ENDPOINTS=""
 
-if [ -n "$WG_IFACES" ]; then
-    echo -e "\n${C_CYAN}= 5. ПРОВЕРКА АНОМАЛИЙ VPN (AMNEZIA WG / WIREGUARD):${C_NONE}"
+if [ -z "$WG_IFACES" ]; then
+    echo -e "  ✅ ${C_GREEN}Интерфейсы WireGuard/AmneziaWG не настроены. Конфликтов нет.${C_NONE}"
+else
+    ENDPOINTS=""
+    VPN_ERRORS=0
+
     for IFACE in $WG_IFACES; do
         PEERS=$(uci show network | grep -E "=(wireguard|amneziawg)_$IFACE" | cut -d. -f2 | cut -d= -f1 | sort -u)
         for PEER in $PEERS; do
@@ -252,9 +257,32 @@ if [ -n "$WG_IFACES" ]; then
             if [ "$ROUTE_ALLOWED" = "1" ]; then
                  echo -e "  ❌ ${C_RED}ОБНАРУЖЕН ПАРАЗИТНЫЙ МАРШРУТ на интерфейсе $IFACE!${C_NONE}"
                  echo -e "     ${C_YELLOW}⚡ В один клик:${C_NONE} uci set network.$PEER.route_allowed_ips='0' && uci commit network && /etc/init.d/network restart"
+                 VPN_ERRORS=1
             fi
         done
     done
+
+    UNIQUE_IPS=$(echo "$ENDPOINTS" | tr ' ' '\n' | grep -v '^$' | sort -u)
+    for IP in $UNIQUE_IPS; do
+        print_loading "Проверка зацикливания ($IP)"
+        if ! echo "$IP" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+$'; then
+            RESOLVED=$(ping -c 1 "$IP" 2>/dev/null | awk -F '[()]' '/PING/{print $2}')
+            [ -n "$RESOLVED" ] && IP="$RESOLVED"
+        fi
+        clear_loading
+        
+        [ -z "$IP" ] && continue
+        ROUTE_DEV=$(ip route get "$IP" 2>/dev/null | head -n1 | grep -oE 'dev [a-zA-Z0-9_-]+' | awk '{print $2}')
+        if echo "$ROUTE_DEV" | grep -qE "^(tun|wg|awg|sing|podkop|zeroblock)"; then
+            echo -e "  ❌ ${C_RED}КРИТИЧЕСКАЯ ОШИБКА: Зацикливание трафика (Routing Loop)!${C_NONE}"
+            echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} В настройках Подкопа добавьте IP: ${C_YELLOW}$IP${C_NONE} в раздел 'Исключения'."
+            VPN_ERRORS=1
+        fi
+    done
+    
+    if [ "$VPN_ERRORS" -eq 0 ]; then
+        echo -e "  ✅ ${C_GREEN}Зацикливаний и паразитных маршрутов не обнаружено.${C_NONE}"
+    fi
 fi
 
 # ====================================================================
@@ -270,8 +298,49 @@ echo -e "     3. ${C_CYAN}Кэш ПК:${C_NONE} На Windows нажмите Win+
 # 7. РАСХОД ТРАФИКА И НАГРУЗКА
 # ====================================================================
 echo -e "\n${C_CYAN}= 7. СИСТЕМА, НАГРУЗКА И ТРАФИК:${C_NONE}"
+
+if command -v vnstat >/dev/null 2>&1; then
+    WAN_DEV=$(ip route show default 2>/dev/null | grep -oE 'dev [a-zA-Z0-9_-]+' | head -n1 | awk '{print $2}')
+    [ -z "$WAN_DEV" ] && WAN_DEV=$(uci -q get network.wan.device)
+    if [ -n "$WAN_DEV" ]; then
+        echo -e "  📊 Расход интернета на интерфейсе ($WAN_DEV):"
+        vnstat -i "$WAN_DEV" -m 2>/dev/null | grep -E "(month|20[0-9]{2}-)" | tail -n 3 | sed 's/^/     /'
+        echo "  ---"
+    fi
+fi
+
 UPTIME=$(awk '{print int($1/86400)"д "int(($1%86400)/3600)"ч "int(($1%3600)/60)"м"}' /proc/uptime)
 CPU_LOAD=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d, -f1 | tr -d ' ')
-echo -e "  Время работы: $UPTIME | Нагрузка ЦП: $CPU_LOAD"
+
+TEMP_C="Нет датчика"
+if [ -f /sys/class/thermal/thermal_zone0/temp ]; then
+    TEMP_C="$(( $(cat /sys/class/thermal/thermal_zone0/temp) / 1000 ))°C"
+fi
+
+RAM_TOTAL=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
+RAM_FREE=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+if [ -n "$RAM_TOTAL" ] && [ "$RAM_TOTAL" -gt 0 ] 2>/dev/null; then
+    RAM_USED_PCT=$(( 100 - (RAM_FREE * 100 / RAM_TOTAL) ))
+else
+    RAM_USED_PCT="N/A"
+fi
+NAND_INFO=$(df -h / | awk '$NF=="/"{printf "%s занято", $5}')
+
+echo -e "  Время работы: $UPTIME | Нагрузка ЦП: $CPU_LOAD | Температура: $TEMP_C"
+echo -e "  Оперативная память: $RAM_USED_PCT% | Внутренняя память (NAND): $NAND_INFO"
+
+if command -v iwinfo >/dev/null 2>&1; then
+    WIFI_IFACES=$(iw dev 2>/dev/null | awk '$1=="Interface"{print $2}')
+    if [ -n "$WIFI_IFACES" ]; then
+        echo -e "  ---"
+        for wiface in $WIFI_IFACES; do
+            if ip link show $wiface 2>/dev/null | grep -q "UP"; then
+                SSID=$(iwinfo $wiface info 2>/dev/null | grep ESSID | cut -d'"' -f2)
+                CLIENTS=$(iwinfo $wiface assoclist 2>/dev/null | grep -E "^[0-9A-F:]+" | wc -l)
+                echo -e "  📡 Беспроводная сеть [${C_YELLOW}${SSID:-Скрытая}${C_NONE}]: подключено активных устройств: ${C_CYAN}$CLIENTS шт.${C_NONE}"
+            fi
+        done
+    fi
+fi
 
 echo -e "\n${C_GREEN}--- ДИАГНОСТИКА ЗАВЕРШЕНА ---${C_NONE}\n"
