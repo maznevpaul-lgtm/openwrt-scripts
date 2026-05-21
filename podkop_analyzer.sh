@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v19 (Deep Explanations & Triple Ping)
+# RouteRich Ultimate Analyzer v20 (Solid Ping & Full Instructions)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -32,7 +32,7 @@ echo "----------------------------------------------------------"
 # ====================================================================
 echo -e "\n${C_CYAN}= 1. УСТАНОВЛЕННЫЕ ПАКЕТЫ И ИХ СТАТУС:${C_NONE}"
 SERVICES="podkop zeroblock sing-box zapret zapret2 opera-proxy youtubeUnblock"
-PODKOP_RUN=0; ZEROBLOCK_RUN=0; ZAPRET_RUN=0
+PODKOP_RUN=0; ZEROBLOCK_RUN=0
 
 for srv in $SERVICES; do
     if [ -f "/etc/init.d/$srv" ]; then
@@ -42,7 +42,6 @@ for srv in $SERVICES; do
         if /etc/init.d/$srv status 2>/dev/null | grep -q "running"; then
             [ "$srv" = "podkop" ] && PODKOP_RUN=1
             [ "$srv" = "zeroblock" ] && ZEROBLOCK_RUN=1
-            [ "$srv" = "zapret" ] || [ "$srv" = "zapret2" ] && ZAPRET_RUN=1
             
             if [ "$srv" = "sing-box" ] && { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; }; then
                 echo -e "  ✅ $(printf '%-15s' $srv) | ${C_GREEN}РАБОТАЕТ (Управляется ядром)${C_NONE} | Авто: $ENAB | $VER"
@@ -57,8 +56,8 @@ done
 
 if [ "$PODKOP_RUN" -eq 1 ] && [ "$ZEROBLOCK_RUN" -eq 1 ]; then
     echo -e "  ❌ ${C_RED}КРИТИЧЕСКАЯ ОШИБКА: Запущены Podkop и Zeroblock одновременно!${C_NONE}"
-    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Обе системы пытаются управлять ядром sing-box и ломают друг другу настройки."
-    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Выберите только одну программу. Вторую необходимо выключить и убрать из автозагрузки."
+    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Обе системы пытаются управлять ядром sing-box. Это гарантированно сломает маршрутизацию."
+    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Перейдите в 'Система' -> 'Загрузка'. Выберите только одну программу (например, Подкоп). Нажмите 'Стоп' и 'Отключить' для второй."
 fi
 
 # ====================================================================
@@ -68,12 +67,13 @@ echo -e "\n${C_CYAN}= 2. ПРОВЕРКА DNS И FAKEDNS (ПЕРЕХВАТ ТР�
 DNSMASQ_PORT=$(uci -q get dhcp.@dnsmasq[0].port || echo "53")
 
 if [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -q ":53 .*sing-box"; then
-    echo -e "  ❌ ${C_RED}КРИТИЧЕСКАЯ ОШИБКА: Конфликт системных DNS-портов!${C_NONE}"
+    echo -e "  ❌ ${C_RED}КРИТИЧЕСКИЙ КОНФЛИКТ: Конфликт системных DNS-портов!${C_NONE}"
     echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Стандартный DNS роутера (dnsmasq) и Podkop пытаются занять один и тот же порт 53."
-    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Откройте интерфейс роутера:"
-    echo -e "       1. Перейдите в 'Сеть' -> 'DHCP и DNS' -> вкладка 'Расширенные настройки'."
-    echo -e "       2. Найдите поле 'Порт DNS-сервера', сотрите 53 и впишите ${C_YELLOW}5353${C_NONE}."
-    echo -e "       3. Нажмите 'Сохранить и применить'."
+    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE}"
+    echo -e "       1. Перейдите в меню роутера: 'Сеть' -> 'DHCP и DNS' -> вкладка 'Расширенные настройки'."
+    echo -e "       2. Найдите поле 'Порт DNS-сервера'."
+    echo -e "       3. Сотрите 53 и впишите ${C_YELLOW}5353${C_NONE}."
+    echo -e "       4. Нажмите 'Сохранить и применить'."
 else
     echo -e "  ✅ Конфликтов системных DNS-портов не обнаружено."
 fi
@@ -83,20 +83,20 @@ FB_IP=$(ping -c 1 facebook.com 2>/dev/null | awk -F '[()]' '/PING/{print $2}')
 clear_loading
 
 if echo "$FB_IP" | grep -qE "^198\.18\."; then
-    echo -e "  ✅ ${C_GREEN}FakeDNS работает идеально!${C_NONE} Заблокированный сайт получил виртуальный IP ($FB_IP) и завернут в туннель."
+    echo -e "  ✅ ${C_GREEN}FakeDNS работает отлично!${C_NONE} Заблокированный сайт получил виртуальный IP ($FB_IP) и завернут в туннель."
 elif [ -n "$FB_IP" ]; then
     echo -e "  ❌ ${C_RED}СБОЙ FAKEDNS:${C_NONE} Сайт получил настоящий IP-адрес ($FB_IP). Трафик пойдет мимо обхода."
     echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Роутер не смог подменить IP заблокированного сайта. Перехват не сработал."
     echo -e "     ${C_CYAN}🛠 Как исправить (Проверьте по порядку):${C_NONE}"
-    echo -e "       1. В браузере (Chrome/Edge/Yandex) выключите «Безопасный DNS» (DoH/DoT) в настройках конфиденциальности."
-    echo -e "       2. Выключите VPN-приложения и AdBlock-клиенты на самом компьютере/телефоне (они перехватывают DNS)."
+    echo -e "       1. В браузере (Chrome/Edge/Yandex) выключите «Безопасный DNS» (DoH/DoT) в настройках."
+    echo -e "       2. Выключите VPN-приложения и AdBlock-клиенты на ПК/Телефоне (они перехватывают DNS)."
     echo -e "       3. Очистите кэш DNS на роутере (пункт 2 в главном меню скриптов)."
 else
     echo -e "  ⚠️  ${C_YELLOW}Таймаут DNS.${C_NONE} Роутер вообще не может определить IP-адрес сайта. Проверьте кабель провайдера."
 fi
 
 # ====================================================================
-# 3. СЕКЦИИ, ПРАВИЛА И ТРОЙНОЙ ПИНГ
+# 3. СЕКЦИИ, СПИСКИ И БРОНЕБОЙНАЯ СКОРОСТЬ
 # ====================================================================
 echo -e "\n${C_CYAN}= 3. АНАЛИЗ СЕКЦИЙ, СПИСКОВ И СКОРОСТИ СЕРВЕРОВ:${C_NONE}"
 > /tmp/analyzer_items.txt
@@ -107,35 +107,31 @@ clear_loading
 if [ -n "$WAN_PING" ]; then
     echo -e "  🌐 Прямой интернет (Провайдер) -> Отклик: ${C_GREEN}${WAN_PING} мс${C_NONE}"
 else
-    echo -e "  ❌ Прямой интернет -> ${C_RED}Нет связи${C_NONE} (Проверьте настройки WAN)"
+    echo -e "  ❌ Прямой интернет -> ${C_RED}Нет связи${C_NONE} (Интернет отсутствует)"
 fi
 echo "  ---"
 
-check_outbounds() {
+check_sections_and_speed() {
     local APP=$1
     if ! uci -q get $APP.settings >/dev/null; then return; fi
     
     echo -e "  🔰 Анализ конфигурации [${C_YELLOW}$APP${C_NONE}]:"
-    CONF_PATH=$(uci -q get $APP.settings.config_path || echo "/etc/sing-box/config.json")
     SECTIONS=$(uci show $APP 2>/dev/null | grep "=section" | cut -d. -f2 | cut -d= -f1)
     
     for sec in $SECTIONS; do
-        print_loading "Анализ секции $sec"
+        print_loading "Опрос секции $sec"
         
-        OUTBOUND=$(uci -q get $APP.$sec.outbound)
-        [ -z "$OUTBOUND" ] && OUTBOUND=$(uci -q get $APP.$sec.proxy_config_type)
-        [ -z "$OUTBOUND" ] && OUTBOUND="$sec"
-        
-        # Интеллектуальный сбор всех списков и доменов (прямых и через правила)
+        # 1. СОБИРАЕМ СПИСКИ СО ВСЕГО ПОДКОПА
         L_RAW="$(uci -q get $APP.$sec.list)"
         D_RAW="$(uci -q get $APP.$sec.domain)"
-        RULES=$(uci show $APP 2>/dev/null | grep -E "\.outbound='$sec'|\.outbound='$OUTBOUND'" | cut -d. -f2 | sort -u)
+        RULES=$(uci show $APP 2>/dev/null | grep -E "=rule|=policy" | cut -d. -f2 | cut -d= -f1)
         for r in $RULES; do
-            L_RAW="$L_RAW $(uci -q get $APP.$r.list)"
-            D_RAW="$D_RAW $(uci -q get $APP.$r.domain)"
+            if [ "$(uci -q get $APP.$r.outbound)" = "$sec" ]; then
+                L_RAW="$L_RAW $(uci -q get $APP.$r.list)"
+                D_RAW="$D_RAW $(uci -q get $APP.$r.domain)"
+            fi
         done
         
-        # Форматирование и запись
         L_STR=$(echo "$L_RAW" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//')
         D_STR=$(echo "$D_RAW" | tr ' ' '\n' | grep -v '^$' | sort -u | tr '\n' ',' | sed 's/,$//')
         ALL_ITEMS=""
@@ -146,56 +142,60 @@ check_outbounds() {
         for i in $(echo "$L_RAW" | tr ' ' '\n' | grep -v '^$'); do echo "Список:$i:$APP->$sec" >> /tmp/analyzer_items.txt; done
         for d in $(echo "$D_RAW" | tr ' ' '\n' | grep -v '^$'); do echo "Домен:$d:$APP->$sec" >> /tmp/analyzer_items.txt; done
 
-        # ТРЕХУРОВНЕВЫЙ ПИНГ
+        # 2. БРОНЕБОЙНЫЙ ПОИСК СКОРОСТИ
         DELAY=""
-        # 1. API Sing-Box
-        if command -v wget >/dev/null 2>&1; then
-            API_RES=$(wget -qO- "http://127.0.0.1:9090/proxies/${OUTBOUND}/delay?url=https://www.gstatic.com/generate_204&timeout=2000" 2>/dev/null)
-            if echo "$API_RES" | grep -q '"delay"'; then
-                DELAY=$(echo "$API_RES" | sed -n 's/.*"delay": *\([0-9]*\).*/\1/p')
-                [ -n "$DELAY" ] && DELAY="${DELAY} мс (API)"
+        SRV_IP=$(uci -q get $APP.$sec.server || uci -q get $APP.$sec.address)
+        IFACE=$(uci -q get $APP.$sec.outbound)
+        
+        # Метод А: Если это локальный прокси (main/opera)
+        if [ "$sec" = "main" ]; then
+            PORT=$(netstat -tulpn 2>/dev/null | grep -iE 'opera|18080' | awk '{print $4}' | awk -F: '{print $NF}' | head -n 1)
+            [ -z "$PORT" ] && PORT=18080
+            if command -v curl >/dev/null 2>&1; then
+                HTTP_CODE=$(curl -o /dev/null -s -w "%{http_code}\n" -x http://127.0.0.1:$PORT --connect-timeout 2 http://cp.cloudflare.com/generate_204)
+                if [ "$HTTP_CODE" = "204" ] || [ "$HTTP_CODE" = "200" ]; then
+                    DELAY="Активен (Локальный порт: $PORT)"
+                fi
             fi
         fi
         
-        # 2. Пинг интерфейса (AWG)
-        if [ -z "$DELAY" ] && ip link show "$OUTBOUND" >/dev/null 2>&1; then
-            RES=$(ping -I "$OUTBOUND" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-            [ -n "$RES" ] && DELAY="${RES} мс (Интерфейс)"
+        # Метод Б: Прямой пинг IP сервера (Vless, Shadowsocks, Mimo)
+        if [ -z "$DELAY" ] && [ -n "$SRV_IP" ] && [ "$SRV_IP" != "127.0.0.1" ]; then
+            RES=$(ping -c 1 -W 2 "$SRV_IP" 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
+            [ -n "$RES" ] && DELAY="${RES} мс (Сервер $SRV_IP)"
         fi
         
-        # 3. Парсинг IP из конфига (Vless/Shadowsocks)
-        if [ -z "$DELAY" ] && [ -f "$CONF_PATH" ]; then
-            SRV=$(grep -A 15 "\"tag\":\s*\"$OUTBOUND\"" "$CONF_PATH" 2>/dev/null | grep -m 1 "\"server\":" | awk -F'"' '{print $4}')
-            if [ -n "$SRV" ] && [ "$SRV" != "127.0.0.1" ]; then
-                RES=$(ping -c 1 -W 2 "$SRV" 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-                [ -n "$RES" ] && DELAY="${RES} мс (IP сервера)"
-            fi
+        # Метод В: Пинг через системный интерфейс (AWG2 / awg10)
+        if [ -z "$DELAY" ] && [ -n "$IFACE" ] && ip link show "$IFACE" >/dev/null 2>&1; then
+            RES=$(ping -I "$IFACE" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
+            [ -n "$RES" ] && DELAY="${RES} мс (Туннель $IFACE)"
         fi
         
         clear_loading
         
+        # 3. ВЫВОД РЕЗУЛЬТАТА И ПОДРОБНЫХ ИНСТРУКЦИЙ
         if [ -n "$DELAY" ]; then
             echo -e "  ✅ [${C_CYAN}$sec${C_NONE}] -> Отклик: ${C_GREEN}${DELAY}${C_NONE}"
             echo -e "     └ Содержит: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
         else
-            echo -e "  ❌ [${C_CYAN}$sec${C_NONE}] -> ${C_RED}Таймаут / Не отвечает${C_NONE} (Туннель упал или недоступен)"
-            echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Роутер не смог достучаться до сервера ($OUTBOUND)."
+            echo -e "  ❌ [${C_CYAN}$sec${C_NONE}] -> ${C_RED}Таймаут / Не отвечает${C_NONE} (Туннель упал)"
+            echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Роутер не смог получить ответ от сервера секции $sec."
             echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE}"
-            echo -e "       1. Проверьте, работает ли сам VPN-сервер (не заблокирован ли его IP провайдером)."
-            echo -e "       2. Убедитесь, что подписка/ключ на этот туннель оплачены и актуальны."
-            echo -e "       3. Проверьте правильность введенных ключей в настройках секции."
+            echo -e "       1. Убедитесь, что подписка (ключ) на этот туннель оплачена и актуальна."
+            echo -e "       2. Провайдер мог заблокировать IP этого сервера. Попробуйте обновить ключ."
+            echo -e "       3. Проверьте правильность введенных ключей в настройках Подкопа (раздел Секции)."
             echo -e "     └ Содержит: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
         fi
     done
 }
 
-check_outbounds "podkop"
-check_outbounds "zeroblock"
+check_sections_and_speed "podkop"
+check_sections_and_speed "zeroblock"
 
 echo "  ---"
 DUPS=$(awk -F':' '{print $1":"$2}' /tmp/analyzer_items.txt | sort | uniq -d)
 if [ -n "$DUPS" ]; then
-    echo -e "  ❌ ${C_RED}КОНФЛИКТ В СПИСКАХ: Найдено дублирование сайтов/списков!${C_NONE}"
+    echo -e "  ❌ ${C_RED}КОНФЛИКТ МАРШРУТОВ: Найдено дублирование сайтов/списков!${C_NONE}"
     for dup in $DUPS; do
         TYPE=$(echo "$dup" | cut -d: -f1)
         VAL=$(echo "$dup" | cut -d: -f2)
@@ -206,7 +206,7 @@ if [ -n "$DUPS" ]; then
         fi
     done
     echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Ядро не понимает, в какой туннель отправлять трафик, т.к. сайт указан в двух местах."
-    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Удалите дубликаты. Один домен/список должен находиться строго в одной секции."
+    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Удалите дубликаты. Один домен или список должен находиться строго в одной секции."
 else
     echo -e "  ✅ ${C_GREEN}Пересечений нет:${C_NONE} Списки маршрутизации чисты и не конфликтуют."
 fi
@@ -229,9 +229,12 @@ if [ -n "$WG_IFACES" ]; then
 
             if [ "$ROUTE_ALLOWED" = "1" ] || [ -z "$ROUTE_ALLOWED" ]; then
                  echo -e "  ❌ ${C_RED}ПАРАЗИТНЫЙ МАРШРУТ на интерфейсе $IFACE!${C_NONE}"
-                 echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Неправильная настройка VPN перехватывает весь трафик роутера."
-                 echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} В меню 'Сеть' -> 'Интерфейсы' -> '$IFACE' -> 'Равноправные узлы'."
-                 echo -e "       Обязательно снимите галочку 'Маршрутизировать разрешённые IP' и сохраните."
+                 echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Неправильная настройка VPN перехватывает весь трафик роутера мимо Подкопа."
+                 echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE}"
+                 echo -e "       1. Зайдите в 'Сеть' -> 'Интерфейсы'."
+                 echo -e "       2. Нажмите 'Изменить' у интерфейса $IFACE."
+                 echo -e "       3. Перейдите во вкладку 'Равноправные узлы' (Peers) -> Изменить."
+                 echo -e "       4. Снимите галочку 'Маршрутизировать разрешённые IP' (Route Allowed IPs) и сохраните."
             fi
         done
     done
@@ -248,9 +251,9 @@ if [ -n "$WG_IFACES" ]; then
         [ -z "$IP" ] && continue
         ROUTE_DEV=$(ip route get "$IP" 2>/dev/null | head -n1 | grep -oE 'dev [a-zA-Z0-9_-]+' | awk '{print $2}')
         if echo "$ROUTE_DEV" | grep -qE "^(tun|wg|awg|sing|podkop|zeroblock)"; then
-            echo -e "  ❌ ${C_RED}ЗАЦИКЛИВАНИЕ ТРАФИКА! VPN-сервер ($IP) уходит сам в себя.${C_NONE}"
+            echo -e "  ❌ ${C_RED}ЗАЦИКЛИВАНИЕ ТРАФИКА! VPN-сервер ($IP) блокирует сам себя.${C_NONE}"
             echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Роутер пытается пустить шифрованный трафик внутрь самого себя. Интернет ляжет."
-            echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Зайдите в настройки Подкопа и добавьте IP ${C_YELLOW}$IP${C_NONE} в раздел 'Исключения' (Bypass)."
+            echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Откройте меню Подкопа и добавьте IP ${C_YELLOW}$IP${C_NONE} в раздел 'Исключения' (Bypass)."
             LOOP_FOUND=1
         fi
     done
@@ -263,7 +266,7 @@ fi
 echo -e "\n${C_CYAN}= 5. ЧЕКЛИСТ КОНЕЧНОГО УСТРОЙСТВА (ПК / Смартфон):${C_NONE}"
 echo -e "  💡 ${C_YELLOW}Если тесты роутера выше зеленые (✅), но сайты у вас не открываются, проверьте:${C_NONE}"
 echo -e "     1. ${C_CYAN}Чужой VPN на устройстве:${C_NONE} Выключите все VPN-приложения (AdGuard VPN, Nord, Outline) на телефоне или ПК."
-echo -e "        └ Они полностью перехватывают трафик до того, как он дойдет до роутера."
+echo -e "        └ Они полностью перехватывают трафик до того, как он дойдет до роутера и Подкопа."
 echo -e "     2. ${C_CYAN}Безопасный DNS (DoH/DoT):${C_NONE} В браузерах Chrome/Edge часто по умолчанию включен скрытый DNS."
 echo -e "        └ Зайдите в настройки браузера -> Конфиденциальность -> Безопасный DNS -> ВЫКЛЮЧИТЬ."
 echo -e "     3. ${C_CYAN}Кэш системы:${C_NONE} Нажмите Win+R, введите cmd и выполните команду: ipconfig /flushdns"
