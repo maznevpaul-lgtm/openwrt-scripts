@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v24 (Native System Engine & jsonfilter)
+# RouteRich Ultimate Analyzer v25 (Native global_check.sh Edition)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -95,7 +95,7 @@ else
 fi
 
 # ====================================================================
-# 3. СЕКЦИИ, СПИСКИ И НАТИВНАЯ СКОРОСТЬ
+# 3. СЕКЦИИ, СПИСКИ И НАТИВНАЯ СКОРОСТЬ (ЧЕРЕЗ GLOBAL_CHECK)
 # ====================================================================
 echo -e "\n${C_CYAN}= 3. АНАЛИЗ СЕКЦИЙ, СПИСКОВ И СКОРОСТИ СЕРВЕРОВ:${C_NONE}"
 > /tmp/analyzer_items.txt
@@ -114,17 +114,25 @@ check_sections_and_speed() {
     local APP=$1
     if ! uci -q get $APP.settings >/dev/null; then return; fi
     
-    echo -e "  🔰 Системный опрос ядра [${C_YELLOW}$APP${C_NONE}]:"
-    API_PORT=$(uci -q get $APP.settings.api_port || echo "9090")
+    echo -e "  🔰 Системный опрос нативного чекера [${C_YELLOW}$APP${C_NONE}]:"
+    
+    # Запускаем встроенную диагностику пакета и фильтруем вывод через awk
+    local NATIVE_CHECK="/usr/share/$APP/global_check.sh"
+    local NATIVE_DATA=""
+    
+    if [ -f "$NATIVE_CHECK" ]; then
+        print_loading "Получение данных от ядра $APP"
+        NATIVE_DATA=$($NATIVE_CHECK 2>/dev/null | awk '/Outbounds проверки/,/FakeIP проверки/ {if ($0 ~ /ms/ || $0 ~ /Не отвечает/) print $0}')
+        clear_loading
+    fi
+    
     SECTIONS=$(uci show $APP 2>/dev/null | grep "=section" | cut -d. -f2 | cut -d= -f1)
     
     for sec in $SECTIONS; do
-        print_loading "Системный тест узла $sec"
-        
         OUTBOUND=$(uci -q get $APP.$sec.outbound || uci -q get $APP.$sec.proxy_config_type)
         [ -z "$OUTBOUND" ] && OUTBOUND="$sec"
         
-        # 1. ГАРАНТИРОВАННЫЙ СБОР СПИСКОВ ИЗ ПРАВИЛ
+        # СБОР СПИСКОВ ИЗ ПРАВИЛ
         L_RAW="$(uci -q get $APP.$sec.list)"
         D_RAW="$(uci -q get $APP.$sec.domain)"
         RULES=$(uci show $APP 2>/dev/null | grep -E "=rule|=policy" | cut -d. -f2 | cut -d= -f1)
@@ -146,29 +154,21 @@ check_sections_and_speed() {
         for i in $(echo "$L_RAW" | tr ' ' '\n' | grep -v '^$'); do echo "Список:$i:$APP->$sec" >> /tmp/analyzer_items.txt; done
         for d in $(echo "$D_RAW" | tr ' ' '\n' | grep -v '^$'); do echo "Домен:$d:$APP->$sec" >> /tmp/analyzer_items.txt; done
 
-        # 2. НАТИВНЫЙ ТЕСТ ЧЕРЕЗ JSONFILTER (КАК В LUCI)
+        # НАТИВНЫЙ ПАРСИНГ СКОРОСТИ
         DELAY=""
-        if command -v jsonfilter >/dev/null 2>&1; then
-            # Принудительно запускаем тест (как делает кнопка "Тестирование задержки" в веб-интерфейсе)
-            wget -qO- "http://127.0.0.1:${API_PORT}/proxies/${OUTBOUND}/delay?url=http://cp.cloudflare.com/generate_204&timeout=2000" >/dev/null 2>&1
-            # Читаем результат из истории ядра
-            DELAY=$(wget -qO- "http://127.0.0.1:${API_PORT}/proxies" 2>/dev/null | jsonfilter -e "@.proxies['$OUTBOUND'].history[-1].delay" 2>/dev/null)
-            
-            # Если по тегу outbound пусто, пробуем запросить по имени секции
-            if [ -z "$DELAY" ] || [ "$DELAY" = "0" ]; then
-                wget -qO- "http://127.0.0.1:${API_PORT}/proxies/${sec}/delay?url=http://cp.cloudflare.com/generate_204&timeout=2000" >/dev/null 2>&1
-                DELAY=$(wget -qO- "http://127.0.0.1:${API_PORT}/proxies" 2>/dev/null | jsonfilter -e "@.proxies['$sec'].history[-1].delay" 2>/dev/null)
+        if [ -n "$NATIVE_DATA" ]; then
+            local SEC_LINE=$(echo "$NATIVE_DATA" | grep -w "$sec" | tail -n 1)
+            if echo "$SEC_LINE" | grep -q "ms"; then
+                DELAY=$(echo "$SEC_LINE" | grep -oE '[0-9]+ ms' | awk '{print $1}')
             fi
         fi
 
-        clear_loading
-        
-        # 3. ВЫВОД И МОДУЛЬ РАССЛЕДОВАНИЯ
+        # ВЫВОД И МОДУЛЬ РАССЛЕДОВАНИЯ
         if [ -n "$DELAY" ] && [ "$DELAY" != "0" ]; then
             echo -e "  ✅ [${C_CYAN}$sec${C_NONE}] -> Отклик: ${C_GREEN}${DELAY} мс${C_NONE} (Нативный тест)"
             echo -e "     └ Направлено: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
         else
-            echo -e "  ❌ [${C_CYAN}$sec${C_NONE}] -> ${C_RED}Таймаут / Не отвечает${C_NONE} (Узел: $OUTBOUND)"
+            echo -e "  ❌ [${C_CYAN}$sec${C_NONE}] -> ${C_RED}Не отвечает${C_NONE} (Туннель '$OUTBOUND' упал)"
             
             # --- СТАРТ МОДУЛЯ ГЛУБОКОГО РАССЛЕДОВАНИЯ ---
             if ip link show "$OUTBOUND" >/dev/null 2>&1; then
@@ -198,8 +198,8 @@ check_sections_and_speed() {
                         echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} IP-адрес сервера забанен РКН, либо сервер выключен. Замените сервер."
                     fi
                 else
-                    echo -e "     ${C_CYAN}🔍 Расследование:${C_NONE} Ядро sing-box не смогло пустить трафик через узел '$OUTBOUND'."
-                    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Убедитесь, что служба Подкопа включена, а настройки секции заполнены без пропусков."
+                    echo -e "     ${C_CYAN}🔍 Расследование:${C_NONE} Служба $APP сообщила, что секция не отвечает."
+                    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Убедитесь, что служба включена, а настройки секции заполнены без пропусков."
                 fi
             fi
             # --- КОНЕЦ МОДУЛЯ РАССЛЕДОВАНИЯ ---
@@ -328,7 +328,7 @@ if command -v iwinfo >/dev/null 2>&1; then
             if ip link show $wiface 2>/dev/null | grep -q "UP"; then
                 SSID=$(iwinfo $wiface info 2>/dev/null | grep ESSID | cut -d'"' -f2)
                 CLIENTS=$(iwinfo $wiface assoclist 2>/dev/null | grep -E "^[0-9A-F:]+" | wc -l)
-                echo -e "  📡 Беспроводная сеть [${C_YELLOW}${SSID:-Скрытая}${C_NONE}]: подключено устройств: ${C_CYAN}$CLIENTS шт.${C_NONE}"
+                echo -e "  📡 Беспроводная сеть [${C_YELLOW}${SSID:-Скрытая}${C_NONE}]: подключено активных устройств: ${C_CYAN}$CLIENTS шт.${C_NONE}"
             fi
         done
     fi
