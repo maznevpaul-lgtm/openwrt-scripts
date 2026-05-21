@@ -1,5 +1,5 @@
 #!/bin/sh
-# Ultimate Podkop & Zeroblock Analyzer (Smart, Clean & User-Friendly)
+# Ultimate Podkop & Zeroblock Analyzer v13 (Deep Ping & Fixes)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -45,17 +45,10 @@ for srv in $SERVICES; do
     fi
 done
 
-# Проверка критического конфликта Подкоп + Zeroblock
 if [ "$PODKOP_RUN" -eq 1 ] && [ "$ZEROBLOCK_RUN" -eq 1 ]; then
     echo -e "  ❌ ${C_RED}Критическая ошибка: Конфликт систем обхода!${C_NONE}"
-    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} У вас одновременно запущены и Podkop, и Zeroblock."
-    echo -e "       Они используют одно и то же ядро sing-box и ломают маршруты друг другу."
-    echo -e "     ${C_CYAN}└ Как исправить:${C_NONE} Выключите одну из служб (оставьте либо Podkop, либо Zeroblock)."
-fi
-
-if { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; } && [ "$ZAPRET_RUN" -eq 1 ]; then
-    echo -e "  ⚠️  ${C_YELLOW}Внимание: Одновременно работают разные системы обхода (sing-box + Zapret)!${C_NONE}"
-    echo -e "     └ Они могут конфликтовать в фаерволе. Рекомендуется использовать что-то одно."
+    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Одновременно запущены и Podkop, и Zeroblock. Они ломают маршруты друг другу."
+    echo -e "     ${C_CYAN}└ Как исправить:${C_NONE} Выключите одну из служб."
 fi
 
 # ====================================================================
@@ -66,93 +59,95 @@ DNSMASQ_PORT=$(uci -q get dhcp.@dnsmasq[0].port || echo "53")
 
 if [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -q ":53 .*sing-box"; then
     echo -e "  ❌ ${C_RED}Критическая ошибка: Конфликт DNS-портов!${C_NONE}"
-    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} В меню роутера откройте 'Сеть' -> 'DHCP и DNS' -> 'Расширенные настройки'."
-    echo -e "       Найдите 'Порт DNS-сервера', измените цифру 53 на 5353 и нажмите 'Сохранить и применить'."
+    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Сеть -> DHCP и DNS -> Расширенные настройки. Порт DNS-сервера: 5353."
 else
     echo -e "  ✅ Конфликтов DNS-портов не обнаружено."
 fi
 
-echo -e "  --- Проверка подмены IP (FakeDNS) ---"
 FB_IP=$(ping -c 1 facebook.com 2>/dev/null | awk -F '[()]' '/PING/{print $2}')
-
 if echo "$FB_IP" | grep -qE "^198\.18\."; then
     echo -e "  ✅ ${C_GREEN}Перехват сайтов (FakeDNS) работает отлично!${C_NONE} (Поддельный IP: $FB_IP)"
 elif [ -n "$FB_IP" ]; then
     echo -e "  ❌ ${C_RED}Ошибка: Перехват сайтов (FakeDNS) не сработал!${C_NONE}"
-    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Сайты получают настоящие IP ($FB_IP) и идут мимо туннелей."
-    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE}"
-    echo -e "       1. Полностью выключите функцию «Безопасный DNS» (DoH) в настройках вашего браузера."
-    echo -e "       2. Очистите кэш DNS (пункт 2 в главном меню скриптов)."
+    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Заблокированный сайт получил настоящий IP ($FB_IP) и идет мимо туннеля."
 else
     echo -e "  ⚠️  ${C_YELLOW}Не удалось проверить DNS.${C_NONE} Возможно, на роутере нет интернета."
 fi
 
 # ====================================================================
-# ПРОВЕРКА СПИСКОВ И ТУННЕЛЕЙ (ПОДКОП + ZEROBLOCK)
+# ПРОВЕРКА СПИСКОВ И НАПРАВЛЕНИЙ
 # ====================================================================
-echo -e "\n${C_CYAN}= ПРОВЕРКА НАПРАВЛЕНИЙ И СКОРОСТИ ОТКЛИКА:${C_NONE}"
-> /tmp/analyzer_items.txt
+echo -e "\n${C_CYAN}= ПРОВЕРКА СЕКЦИЙ И КОНФЛИКТОВ МАРШРУТИЗАЦИИ:${C_NONE}"
+> /tmp/analyzer_items.txt # Гарантированно создаем файл
 
-WAN_PING=$(ping -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-if [ -n "$WAN_PING" ]; then
-    echo -e "  🌐 Прямой интернет (Провайдер): Отклик ${C_GREEN}${WAN_PING} мс${C_NONE}"
-else
-    echo -e "  ❌ Прямой интернет: ${C_RED}Нет связи${C_NONE} (Проверьте кабель провайдера)"
-fi
-echo "  ---"
-
-# Чтение секций Podkop
 if uci -q get podkop.settings >/dev/null; then
     SECTIONS_P=$(uci show podkop | grep "=section" | cut -d. -f2 | cut -d= -f1)
     for sec in $SECTIONS_P; do
-        OUTBOUND=$(uci -q get podkop.$sec.outbound || echo "неизвестно")
-        if uci -q get network.$OUTBOUND >/dev/null; then
-            IFACE_PING=$(ping -I "$OUTBOUND" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-            [ -n "$IFACE_PING" ] && P_STR="${C_GREEN}${IFACE_PING} мс${C_NONE}" || P_STR="${C_RED}Таймаут (Туннель упал!)${C_NONE}"
-            echo -e "  ✅ [Подкоп] Секция ${C_CYAN}$sec${C_NONE} -> Отклик: $P_STR"
-        else
-            echo -e "  📦 [Подкоп] Секция ${C_CYAN}$sec${C_NONE} -> ${C_YELLOW}Встроенный прокси ($OUTBOUND)${C_NONE}"
-        fi
+        OUTBOUND=$(uci -q get podkop.$sec.outbound)
+        [ -z "$OUTBOUND" ] && OUTBOUND=$(uci -q get podkop.$sec.proxy_config_type)
+        echo -e "  📦 [Подкоп] Секция ${C_CYAN}$sec${C_NONE} -> Направление: ${C_YELLOW}${OUTBOUND:-Встроенный прокси}${C_NONE}"
+        
         for item in $(uci -q get podkop.$sec.list 2>/dev/null); do echo "Список:$item:Подкоп->$sec" >> /tmp/analyzer_items.txt; done
         for item in $(uci -q get podkop.$sec.domain 2>/dev/null); do echo "Домен:$item:Подкоп->$sec" >> /tmp/analyzer_items.txt; done
     done
 fi
 
-# Чтение секций Zeroblock
 if uci -q get zeroblock.settings >/dev/null; then
     SECTIONS_Z=$(uci show zeroblock | grep "=section" | cut -d. -f2 | cut -d= -f1)
     for sec in $SECTIONS_Z; do
-        OUTBOUND=$(uci -q get zeroblock.$sec.outbound || echo "неизвестно")
-        if uci -q get network.$OUTBOUND >/dev/null; then
-            IFACE_PING=$(ping -I "$OUTBOUND" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
-            [ -n "$IFACE_PING" ] && P_STR="${C_GREEN}${IFACE_PING} мс${C_NONE}" || P_STR="${C_RED}Таймаут (Туннель упал!)${C_NONE}"
-            echo -e "  ✅ [Zeroblock] Секция ${C_CYAN}$sec${C_NONE} -> Отклик: $P_STR"
-        else
-            echo -e "  📦 [Zeroblock] Секция ${C_CYAN}$sec${C_NONE} -> ${C_YELLOW}Встроенный прокси ($OUTBOUND)${C_NONE}"
-        fi
+        OUTBOUND=$(uci -q get zeroblock.$sec.outbound)
+        [ -z "$OUTBOUND" ] && OUTBOUND=$(uci -q get zeroblock.$sec.proxy_config_type)
+        echo -e "  📦 [Zeroblock] Секция ${C_CYAN}$sec${C_NONE} -> Направление: ${C_YELLOW}${OUTBOUND:-Встроенный прокси}${C_NONE}"
+        
         for item in $(uci -q get zeroblock.$sec.list 2>/dev/null); do echo "Список:$item:Zeroblock->$sec" >> /tmp/analyzer_items.txt; done
         for item in $(uci -q get zeroblock.$sec.domain 2>/dev/null); do echo "Домен:$item:Zeroblock->$sec" >> /tmp/analyzer_items.txt; done
     done
 fi
 
-# Анализ дубликатов (внутри сервисов и между ними)
-if [ -s /tmp/analyzer_items.txt ]; then
-    echo "  ---"
-    DUPS=$(awk -F':' '{print $1":"$2}' /tmp/analyzer_items.txt | sort | uniq -d)
-    if [ -n "$DUPS" ]; then
-        echo -e "  ❌ ${C_RED}Конфликт маршрутов! Найдено дублирование сайтов/списков:${C_NONE}"
-        for dup in $DUPS; do
-            TYPE=$(echo "$dup" | cut -d: -f1)
-            VAL=$(echo "$dup" | cut -d: -f2)
-            IN_SECS=$(grep "^$dup:" /tmp/analyzer_items.txt | cut -d':' -f3 | sort -u | tr '\n' ' ' | sed 's/ $//')
-            SEC_COUNT=$(echo "$IN_SECS" | wc -w)
-            if [ "$SEC_COUNT" -gt 1 ]; then
-                echo -e "       -> $TYPE ${C_RED}'$VAL'${C_NONE} добавлен сразу в: [ ${C_YELLOW}$IN_SECS${C_NONE} ]"
+echo "  ---"
+DUPS=$(awk -F':' '{print $1":"$2}' /tmp/analyzer_items.txt | sort | uniq -d)
+if [ -n "$DUPS" ]; then
+    echo -e "  ❌ ${C_RED}Конфликт маршрутов! Найдено дублирование сайтов/списков:${C_NONE}"
+    for dup in $DUPS; do
+        TYPE=$(echo "$dup" | cut -d: -f1)
+        VAL=$(echo "$dup" | cut -d: -f2)
+        IN_SECS=$(grep "^$dup:" /tmp/analyzer_items.txt | cut -d':' -f3 | sort -u | tr '\n' ' ' | sed 's/ $//')
+        SEC_COUNT=$(echo "$IN_SECS" | wc -w)
+        if [ "$SEC_COUNT" -gt 1 ]; then
+            echo -e "       -> $TYPE ${C_RED}'$VAL'${C_NONE} добавлен сразу в: [ ${C_YELLOW}$IN_SECS${C_NONE} ]"
+        fi
+    done
+    echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Сайт или список должен находиться строго в одном месте."
+else
+    echo -e "  ✅ ${C_GREEN}Пересечений нет:${C_NONE} Конфликтов в списках доменов не обнаружено."
+fi
+
+# ====================================================================
+# ДОСТУПНОСТЬ ПРОКСИ (VLESS, SHADOWSOCKS И ДР.) И WAN
+# ====================================================================
+echo -e "\n${C_CYAN}= СКОРОСТЬ И ДОСТУПНОСТЬ СЕРВЕРОВ:${C_NONE}"
+WAN_PING=$(ping -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
+if [ -n "$WAN_PING" ]; then
+    echo -e "  🌐 Прямой интернет (Провайдер) -> Отклик: ${C_GREEN}${WAN_PING} мс${C_NONE}"
+else
+    echo -e "  ❌ Прямой интернет -> ${C_RED}Нет связи${C_NONE} (Проверьте кабель провайдера)"
+fi
+
+# Парсим JSON sing-box для проверки серверов Vless/Shadowsocks
+CONF_PATH=$(uci -q get podkop.settings.config_path || echo "/etc/sing-box/config.json")
+if [ -f "$CONF_PATH" ]; then
+    # Ищем реальные IP/домены серверов внутри конфига
+    SERVERS=$(grep -E '"server"\s*:\s*"[^"]+"' "$CONF_PATH" | awk -F'"' '{print $4}' | sort -u)
+    if [ -n "$SERVERS" ]; then
+        for srv in $SERVERS; do
+            [ -z "$srv" ] || [ "$srv" = "127.0.0.1" ] && continue
+            PING_RES=$(ping -c 1 -W 2 "$srv" 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
+            if [ -n "$PING_RES" ]; then
+                echo -e "  ✅ Прокси-сервер [${C_YELLOW}$srv${C_NONE}] -> Отклик: ${C_GREEN}${PING_RES} мс${C_NONE}"
+            else
+                echo -e "  ❌ Прокси-сервер [${C_YELLOW}$srv${C_NONE}] -> ${C_RED}Таймаут (Сервер упал или заблокирован)${C_NONE}"
             fi
         done
-        echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Сайт или список должен находиться строго в одном месте, иначе система запутается."
-    else
-        echo -e "  ✅ Конфликтов в списках сайтов не обнаружено."
     fi
 fi
 
@@ -166,6 +161,13 @@ LOOP_FOUND=0
 if [ -n "$WG_IFACES" ]; then
     echo -e "\n${C_CYAN}= ПРОВЕРКА VPN-ИНТЕРФЕЙСОВ (AMNEZIA WG / WIREGUARD):${C_NONE}"
     for IFACE in $WG_IFACES; do
+        IFACE_PING=$(ping -I "$IFACE" -c 1 -W 2 8.8.8.8 2>/dev/null | awk -F '/' '/round-trip/{print $4}')
+        if [ -n "$IFACE_PING" ]; then
+            echo -e "  ✅ Интерфейс [${C_YELLOW}$IFACE${C_NONE}] -> Отклик: ${C_GREEN}${IFACE_PING} мс${C_NONE}"
+        else
+            echo -e "  ❌ Интерфейс [${C_YELLOW}$IFACE${C_NONE}] -> ${C_RED}Таймаут (Туннель не работает!)${C_NONE}"
+        fi
+
         PEERS=$(uci show network | grep -E "=(wireguard|amneziawg)_$IFACE" | cut -d. -f2 | cut -d= -f1 | sort -u)
         for PEER in $PEERS; do
             ROUTE_ALLOWED=$(uci -q get network.$PEER.route_allowed_ips)
@@ -174,7 +176,7 @@ if [ -n "$WG_IFACES" ]; then
 
             if [ "$ROUTE_ALLOWED" = "1" ] || [ -z "$ROUTE_ALLOWED" ]; then
                  echo -e "  ❌ ${C_RED}Ошибка в настройках интерфейса $IFACE!${C_NONE}"
-                 echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} В 'Сеть' -> 'Интерфейсы' -> '$IFACE' -> 'Равноправные узлы' -> Снимите галочку 'Маршрутизировать разрешённые IP'."
+                 echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Снимите галочку 'Маршрутизировать разрешённые IP' в настройках пира."
             fi
         done
     done
@@ -190,7 +192,7 @@ if [ -n "$WG_IFACES" ]; then
         ROUTE_DEV=$(ip route get "$IP" 2>/dev/null | head -n1 | grep -oE 'dev [a-zA-Z0-9_-]+' | awk '{print $2}')
         if echo "$ROUTE_DEV" | grep -qE "^(tun|wg|awg|sing|podkop|zeroblock)"; then
             echo -e "  ❌ ${C_RED}Зацикливание трафика! Сервер VPN ($IP) блокирует сам себя.${C_NONE}"
-            echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Добавьте IP ${C_YELLOW}$IP${C_NONE} в раздел 'Исключения' (Bypass) вашего Подкопа или Zeroblock."
+            echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Добавьте IP ${C_YELLOW}$IP${C_NONE} в раздел 'Исключения' (Bypass)."
             LOOP_FOUND=1
         fi
     done
@@ -236,7 +238,7 @@ fi
 # НАГРУЗКА НА РОУТЕР
 # ====================================================================
 echo -e "\n${C_CYAN}= НАГРУЗКА НА РОУТЕР:${C_NONE}"
-UPTIME=$(awk '{print int($1/86400)"д "int(($1%86400)/3600)"ч "int(($1%3600)/60)"m"}' /proc/uptime)
+UPTIME=$(awk '{print int($1/86400)"д "int(($1%86400)/3600)"ч "int(($1%3600)/60)"м"}' /proc/uptime)
 CPU_LOAD=$(uptime | awk -F'load average:' '{ print $2 }' | cut -d, -f1 | tr -d ' ')
 
 TEMP_C="Нет датчика"
@@ -245,8 +247,12 @@ if [ -f /sys/class/thermal/thermal_zone0/temp ]; then
 fi
 
 RAM_TOTAL=$(awk '/MemTotal/ {print $2}' /proc/meminfo)
-RAM_FREE=$(awk '/MemAvailable/ {proc/meminfo || print $4}')
-[ -n "$RAM_TOTAL" ] && [ "$RAM_TOTAL" -gt 0 ] && RAM_USED_PCT=$(( 100 - (RAM_FREE * 100 / RAM_TOTAL) )) || RAM_USED_PCT="N/A"
+RAM_FREE=$(awk '/MemAvailable/ {print $2}' /proc/meminfo)
+if [ -n "$RAM_TOTAL" ] && [ "$RAM_TOTAL" -gt 0 ] 2>/dev/null; then
+    RAM_USED_PCT=$(( 100 - (RAM_FREE * 100 / RAM_TOTAL) ))
+else
+    RAM_USED_PCT="N/A"
+fi
 NAND_INFO=$(df -h / | awk '$NF=="/"{printf "%s занято", $5}')
 
 echo -e "  Время работы: $UPTIME | Процессор: $CPU_LOAD | Температура: $TEMP_C"
