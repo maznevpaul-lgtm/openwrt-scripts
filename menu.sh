@@ -26,7 +26,7 @@ read choice
 case "$choice" in
     1)
         echo -e "\n${C_YELLOW}Запуск диагонстики всех туннелий и зацикливаний...${C_NONE}\n"
-        sh <(wget -qO- "$BASE_URL/podkop_ultimate_analyzer.sh")
+        sh <(wget -qO- "$BASE_URL/podkop_analyzer.sh")
         ;;
     2)
         echo -e "\n${C_YELLOW}Очистка кэша DNS и перезапуск...${C_NONE}\n"
