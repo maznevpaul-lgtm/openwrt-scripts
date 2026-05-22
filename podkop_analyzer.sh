@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v35 (Smart RouteRich DNS Architecture)
+# RouteRich Ultimate Analyzer v36 (True Network-based Failsafe Detection)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -31,8 +31,8 @@ echo "----------------------------------------------------------"
 # 1. ВЕРСИИ И СТАТУС ПРОГРАММ
 # ====================================================================
 echo -e "\n${C_CYAN}= 1. УСТАНОВЛЕННЫЕ ПАКЕТЫ И ИХ СТАТУС:${C_NONE}"
-SERVICES="podkop zeroblock sing-box zapret zapret2 opera-proxy youtubeUnblock dns-failsafe"
-PODKOP_RUN=0; ZEROBLOCK_RUN=0; ZAPRET_RUN=0; OPERA_RUN=0; FAILSAFE_RUN=0
+SERVICES="podkop zeroblock sing-box zapret zapret2 opera-proxy youtubeUnblock"
+PODKOP_RUN=0; ZEROBLOCK_RUN=0; ZAPRET_RUN=0; OPERA_RUN=0
 
 for srv in $SERVICES; do
     if [ -f "/etc/init.d/$srv" ]; then
@@ -44,7 +44,6 @@ for srv in $SERVICES; do
             [ "$srv" = "zeroblock" ] && ZEROBLOCK_RUN=1
             [ "$srv" = "zapret" ] || [ "$srv" = "zapret2" ] && ZAPRET_RUN=1
             [ "$srv" = "opera-proxy" ] && OPERA_RUN=1
-            [ "$srv" = "dns-failsafe" ] && FAILSAFE_RUN=1
             
             if [ "$srv" = "sing-box" ] && { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; }; then
                 echo -e "  ✅ $(printf '%-15s' $srv) | ${C_GREEN}РАБОТАЕТ (Управляется ядром)${C_NONE} | Авто: $ENAB | $VER"
@@ -74,12 +73,12 @@ fi
 echo -e "\n${C_CYAN}= 2. ПРОВЕРКА DNS И FAKEDNS (ПЕРЕХВАТ ТРАФИКА):${C_NONE}"
 DNSMASQ_PORT=$(uci -q get dhcp.@dnsmasq[0].port || echo "53")
 
-# ИСПРАВЛЕНИЕ: Умная проверка архитектуры DNS Failsafe Proxy
-if [ "$FAILSAFE_RUN" -eq 1 ]; then
-    echo -e "  ✅ ${C_GREEN}Архитектура RouteRich:${C_NONE} DNS Failsafe Proxy управляет трафиком. Порт 53 безопасно разделен (127.0.0.42)."
-elif [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -E -q ':(53)\s+.*sing-box'; then
+# Умная проверка по РЕАЛЬНЫМ сетевым адресам (Игнорирует ложные конфликты)
+if netstat -tulpn 2>/dev/null | grep -qE "127\.0\.0\.42:53\s+.*sing-box"; then
+    echo -e "  ✅ ${C_GREEN}Архитектура RouteRich:${C_NONE} Ядро использует выделенный IP (127.0.0.42) для DNS. Конфликтов нет."
+elif [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -qE "(0\.0\.0\.0|127\.0\.0\.1|${LAN_IP}):53\s+.*sing-box"; then
     echo -e "  ❌ ${C_RED}КРИТИЧЕСКИЙ КОНФЛИКТ: Конфликт системных DNS-портов!${C_NONE}"
-    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Служба dnsmasq и Podkop дерутся за порт 53."
+    echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Служба dnsmasq и Podkop дерутся за стандартный порт 53."
     echo -e "     ${C_YELLOW}⚡ В один клик:${C_NONE} uci set dhcp.@dnsmasq[0].port='5353' && uci commit dhcp && /etc/init.d/dnsmasq restart"
 else
     echo -e "  ✅ Конфликтов системных DNS-портов не обнаружено."
