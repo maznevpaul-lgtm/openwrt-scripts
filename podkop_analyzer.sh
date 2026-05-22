@@ -1,5 +1,5 @@
 #!/bin/sh
-# RouteRich Ultimate Analyzer v36 (True Network-based Failsafe Detection)
+# RouteRich Ultimate Analyzer v37 (FakeIP Error Detection)
 
 trap "rm -f /tmp/analyzer_items.txt; exit" EXIT INT TERM
 
@@ -31,8 +31,8 @@ echo "----------------------------------------------------------"
 # 1. ВЕРСИИ И СТАТУС ПРОГРАММ
 # ====================================================================
 echo -e "\n${C_CYAN}= 1. УСТАНОВЛЕННЫЕ ПАКЕТЫ И ИХ СТАТУС:${C_NONE}"
-SERVICES="podkop zeroblock sing-box zapret zapret2 opera-proxy youtubeUnblock"
-PODKOP_RUN=0; ZEROBLOCK_RUN=0; ZAPRET_RUN=0; OPERA_RUN=0
+SERVICES="podkop zeroblock sing-box zapret zapret2 opera-proxy youtubeUnblock dns-failsafe"
+PODKOP_RUN=0; ZEROBLOCK_RUN=0; ZAPRET_RUN=0; OPERA_RUN=0; FAILSAFE_RUN=0
 
 for srv in $SERVICES; do
     if [ -f "/etc/init.d/$srv" ]; then
@@ -44,6 +44,7 @@ for srv in $SERVICES; do
             [ "$srv" = "zeroblock" ] && ZEROBLOCK_RUN=1
             [ "$srv" = "zapret" ] || [ "$srv" = "zapret2" ] && ZAPRET_RUN=1
             [ "$srv" = "opera-proxy" ] && OPERA_RUN=1
+            [ "$srv" = "dns-failsafe" ] && FAILSAFE_RUN=1
             
             if [ "$srv" = "sing-box" ] && { [ "$PODKOP_RUN" -eq 1 ] || [ "$ZEROBLOCK_RUN" -eq 1 ]; }; then
                 echo -e "  ✅ $(printf '%-15s' $srv) | ${C_GREEN}РАБОТАЕТ (Управляется ядром)${C_NONE} | Авто: $ENAB | $VER"
@@ -73,7 +74,6 @@ fi
 echo -e "\n${C_CYAN}= 2. ПРОВЕРКА DNS И FAKEDNS (ПЕРЕХВАТ ТРАФИКА):${C_NONE}"
 DNSMASQ_PORT=$(uci -q get dhcp.@dnsmasq[0].port || echo "53")
 
-# Умная проверка по РЕАЛЬНЫМ сетевым адресам (Игнорирует ложные конфликты)
 if netstat -tulpn 2>/dev/null | grep -qE "127\.0\.0\.42:53\s+.*sing-box"; then
     echo -e "  ✅ ${C_GREEN}Архитектура RouteRich:${C_NONE} Ядро использует выделенный IP (127.0.0.42) для DNS. Конфликтов нет."
 elif [ "$DNSMASQ_PORT" = "53" ] && netstat -tulpn 2>/dev/null | grep -qE "(0\.0\.0\.0|127\.0\.0\.1|${LAN_IP}):53\s+.*sing-box"; then
@@ -128,7 +128,6 @@ check_sections_and_speed() {
         
         CONN_TYPE=$(uci -q get $APP.$sec.connection_type || echo "proxy")
         
-        # СБОР СПИСКОВ
         C_LISTS=$(uci -q get $APP.$sec.community_lists | tr ' ' ',')
         D_TEXT=$(uci -q get $APP.$sec.user_domains_text | tr '\n' ',' | sed 's/ //g; s/,,/,/g; s/^,//; s/,$//')
         S_TEXT=$(uci -q get $APP.$sec.user_subnets_text | tr '\n' ',' | sed 's/ //g; s/,,/,/g; s/^,//; s/,$//')
@@ -144,7 +143,6 @@ check_sections_and_speed() {
         for i in $(echo "$C_LISTS" | tr ',' '\n'); do [ -n "$i" ] && echo "Список:$i:$APP->$sec" >> /tmp/analyzer_items.txt; done
         for d in $(echo "$D_TEXT" | tr ',' '\n' | grep -v '^//'); do [ -n "$d" ] && echo "Домен:$d:$APP->$sec" >> /tmp/analyzer_items.txt; done
 
-        # ТЕСТ СКОРОСТИ
         DELAY=""
         STATUS_MSG=""
         
@@ -177,7 +175,6 @@ check_sections_and_speed() {
 
         clear_loading
         
-        # ВЫВОД И РАССЛЕДОВАНИЕ
         if [ -n "$DELAY" ] && [ "$DELAY" != "0" ]; then
             echo -e "  ✅ [${C_CYAN}$sec${C_NONE}] -> Отклик: ${C_GREEN}${DELAY}${C_NONE} $STATUS_MSG"
             echo -e "     └ Направлено: ${C_YELLOW}$ALL_ITEMS${C_NONE}"
@@ -214,15 +211,16 @@ clear_loading
 
 ERR_REFUSED=$(grep "connection refused" /tmp/singbox_logs.txt | wc -l)
 ERR_TIMEOUT=$(grep "i/o timeout" /tmp/singbox_logs.txt | wc -l)
+ERR_FAKEIP=$(grep "missing fakeip record" /tmp/singbox_logs.txt | wc -l)
 
-if [ "$ERR_REFUSED" -eq 0 ] && [ "$ERR_TIMEOUT" -eq 0 ]; then
+if [ "$ERR_REFUSED" -eq 0 ] && [ "$ERR_TIMEOUT" -eq 0 ] && [ "$ERR_FAKEIP" -eq 0 ]; then
     echo -e "  ✅ ${C_GREEN}Ошибок трафика не обнаружено.${C_NONE} Пакеты идут стабильно."
 else
     echo -e "  ⚠️  ${C_YELLOW}Обнаружены ошибки маршрутизации в реальном времени!${C_NONE}"
     
     if [ "$ERR_REFUSED" -gt 0 ]; then
         echo -e "  ❌ ${C_RED}Connection Refused ($ERR_REFUSED раз):${C_NONE}"
-        echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Внутренний прокси-сервер (например, Opera-proxy) 'упал' или отклоняет подключения."
+        echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Внутренний прокси-сервер 'упал' или отклоняет подключения."
         echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Перезапустите службу в 'Система -> Загрузка'."
     fi
     
@@ -232,6 +230,12 @@ else
         echo -e "     ${C_CYAN}└ Проблемные узлы:${C_NONE} ${C_YELLOW}$(echo $BAD_OUTS | tr '\n' ' ')${C_NONE}"
         echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Пакеты уходят в этот туннель, но теряются по пути. Сервер не отвечает."
         echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Для AWG2: снизьте MTU до 1280. Для Vless: блокировка провайдера (ТСПУ) или сервер недоступен."
+    fi
+
+    if [ "$ERR_FAKEIP" -gt 0 ]; then
+        echo -e "  ❌ ${C_RED}Missing FakeIP Record ($ERR_FAKEIP раз):${C_NONE}"
+        echo -e "     ${C_CYAN}└ Что это значит:${C_NONE} Ваш ПК/телефон запомнил старый виртуальный IP (FakeIP) и стучится по нему, но роутер его уже забыл после перезапуска."
+        echo -e "     ${C_CYAN}🛠 Как исправить:${C_NONE} Очистите DNS-кэш (ipconfig /flushdns) или выкл/вкл Wi-Fi на устройстве."
     fi
 fi
 rm -f /tmp/singbox_logs.txt
