@@ -11,12 +11,13 @@ BASE_URL="https://maznevpaul-lgtm.github.io/openwrt-scripts"
 
 clear
 echo -e "${C_CYAN}==================================================${C_NONE}"
-echo -e "${C_GREEN}       УТИЛИТЫ ДЛЯ OPENWRT И ПОДКОПА (v1.1)       ${C_NONE}"
+echo -e "${C_GREEN}       УТИЛИТЫ ДЛЯ OPENWRT И ПОДКОПА (v1.2)       ${C_NONE}"
 echo -e "${C_CYAN}==================================================${C_NONE}"
 echo -e " 1) 🚀 Запустить Мега-Анализатор (Полная диагностика)"
 echo -e " 2) 🧹 Очистить кэш DNS и перезапустить Подкоп"
 echo -e " 3) 🔄 Обновить Подкоп (Официальный скрипт автора без сброса)"
 echo -e " 4) 🚀 Запустить диагностику от RouteRich"
+echo -e " 5) 📦 Обновить Sing-box Extended (Автоматически)"
 echo -e " 0) ❌ Выход"
 echo "--------------------------------------------------"
 printf " Выбери действие (введи цифру и нажми Enter): "
@@ -24,7 +25,7 @@ read choice
 
 case "$choice" in
     1)
-        echo -e "\n${C_YELLOW}Запуск диагонстики всех туннелий и зацикливаний...${C_NONE}\n"
+        echo -e "\n${C_YELLOW}Запуск диагностики всех туннелей и зацикливаний...${C_NONE}\n"
         sh <(wget -qO- "$BASE_URL/podkop_analyzer.sh")
         ;;
     2)
@@ -40,6 +41,10 @@ case "$choice" in
         echo -e "\n${C_YELLOW}Запуск диагностики от RouteRich...${C_NONE}\n"
         # Вызов оригинального скрипта автора Подкопа
         sh <(wget -qO- https://raw.githubusercontent.com/kkkkkCampbell/master/refs/heads/test_config_script/test_config_script_nightly)
+        ;;
+    5)
+        echo -e "\n${C_YELLOW}Запуск автоматического обновления Sing-box Extended...${C_NONE}\n"
+        wget -O /tmp/install.sh https://raw.githubusercontent.com/EikeiDev/OpenWRT-sing-box-extended/refs/heads/main/install.sh && sh /tmp/install.sh
         ;;
     0)
         echo -e "\nВыход. Удачи!\n"
