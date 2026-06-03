@@ -1,4 +1,4 @@
-# **🚀 OpenWrt & Podkop Ultimate Tools**
+# **🚀 Ultimate Tools**
 
 Добро пожаловать\! Это набор мощных скриптов и утилит для удобного управления, обновления и глубокой диагностики маршрутизации на роутерах с **OpenWrt**, использующих **Podkop** и **Sing-box**.
 
@@ -7,8 +7,9 @@
 ## **⚡ Быстрый старт (Запуск Меню)**
 
 Вам не нужно ничего скачивать вручную. Просто скопируйте эту команду, вставьте её в терминал вашего роутера (через SSH или встроенный терминал) и нажмите Enter:
-
-sh \<(wget \-qO- https://maznevpaul-lgtm.github.io/openwrt-scripts/menu.sh)
+```bash
+sh <(wget -qO- https://maznevpaul-lgtm.github.io/openwrt-scripts/menu.sh)
+```
 
 ## **🛠 Что внутри?**
 
